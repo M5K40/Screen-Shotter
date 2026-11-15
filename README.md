@@ -1,11 +1,11 @@
 # Screen-Shotter
 Software that automatically takes screenshots of you desktop
 
-#How To Download
+# How To Download
 Navigate to screenshotter.exe and download it.
 Open the exe, it will give you a console to change the amount of MB and quantity of screenshots limit.
 
-#Keybinds
+# Keybinds
 Q To start and stop
 Ctrl + C to quit the process
 
