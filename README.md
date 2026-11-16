@@ -22,8 +22,8 @@ Added screenshotterWGUI.exe, new gui based version of the original screenshotter
 Added screenshotterWGUI.py source file, you can look though this to verify it is safe due to the virus total report giving 4 false positives probably based on what it is importing and looking at keyboard for key binds.
 
 <p align="center"> Virus Total Report No GUI Only Console 
-  <p align="center"> [![VirusTotal Scan Status](https://shields.io)](https://www.virustotal.com/gui/file/fd082d4d8fac4ee20fe3036a62c0bd6fac6ee80c95e747e3f1b7920054065b02)
-
+  <p align="center"> [![VirusTotal Badge](https://img.shields.io/badge/VirusTotal-Scan%20Results-blue?logo=virustotal)](https://www.virustotal.com/gui/file/fd082d4d8fac4ee20fe3036a62c0bd6fac6ee80c95e747e3f1b7920054065b02)
+  
   It has 2 false positives, you can check the source code by looking at "screenshotter.exe" or scanning it through windows security, defender or any anti-virus software.
 
 <img width="1309" height="916" alt="image" src="https://github.com/user-attachments/assets/6d11d91f-da45-4c17-a80d-6956b7fc4e76" />
