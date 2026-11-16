@@ -1,5 +1,5 @@
 # Screen-Shotter BETA
-Software that automatically takes screenshots of you desktop
+Software that automatically takes screenshots of you desktop. Current .exe file may not work. This will be fixed ASAP!
 
 ## How To Download
 Navigate to screenshotter.exe and download it.
