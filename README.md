@@ -1,4 +1,4 @@
-# Screen-Shotter
+# Screen-Shotter BETA
 Software that automatically takes screenshots of you desktop
 
 ## How To Download
