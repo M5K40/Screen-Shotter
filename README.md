@@ -23,7 +23,7 @@ Added screenshotterWGUI.py source file, you can look though this to verify it is
 
 Virus Total Report No GUI Only Console 
 [![VirusTotal Analysis](https://img.shields.io/badge/VirusTotal-Checked-brightgreen?logo=virustotal)](https://www.virustotal.com/gui/fd082d4d8fac4ee20fe3036a62c0bd6fac6ee80c95e747e3f1b7920054065b02)
-  
+[![VirusTotal Scan Status](https://img.shields.io/badge/VirusTotal-Scan%20Results-blue)](https://www.virustotal.com/gui/file/3baa99c17d50120996aad94ec689fd9261549663e80052aa9e19689fc9b49358)
   It has 2 false positives, you can check the source code by looking at "screenshotter.exe" or scanning it through windows security, defender or any anti-virus software.
 
 <img width="1309" height="916" alt="image" src="https://github.com/user-attachments/assets/6d11d91f-da45-4c17-a80d-6956b7fc4e76" />
@@ -31,6 +31,7 @@ Virus Total Report No GUI Only Console
 
 Virus Total Report GUI Only No Console 
 [![VirusTotal Scan Status](https://img.shields.io/badge/VirusTotal-Scan%20Results-blue)](https://www.virustotal.com/gui/file/3baa99c17d50120996aad94ec689fd9261549663e80052aa9e19689fc9b49358)
+[![VirusTotal Analysis](https://img.shields.io/badge/VirusTotal-Checked-brightgreen?logo=virustotal)](https://www.virustotal.com/gui/3baa99c17d50120996aad94ec689fd9261549663e80052aa9e19689fc9b49358)
 
   It has 4 false positives, you can check the source code by looking at "screenshotterWGUI.exe" or scanning it through windows security, defender or any anti-virus software.
 
