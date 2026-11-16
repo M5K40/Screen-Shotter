@@ -1,0 +1,2420 @@
+import os
+import re
+import io
+import json
+import base64
+import random
+import math
+import threading
+import time
+import ctypes
+import ctypes.wintypes as wt
+import tkinter as tk
+import tkinter.font as tkfont
+from tkinter import filedialog, messagebox, colorchooser
+import keyboard
+import pyautogui
+from plyer import notification
+from PIL import Image, ImageDraw, ImageTk
+
+CONFIG_FILE = "screenshot_config.json"
+
+WIN_W = 520
+WIN_H = 674           # initial height (the layout resizes the window to fit the current page)
+BAR_H = 32
+
+MAX_LINES_LIMIT = 300
+
+# Window scaling (drag the right edge, bottom edge or bottom-right corner)
+MIN_SCALE = 0.7                   # smallest width / height scale (1.0 = original size)
+MAX_SCALE = 3.0                   # largest (also limited so the window fits on the screen)
+RESIZE_EDGE = 8                   # grab zone (pixels) along the right / bottom edge
+RESIZE_CORNER = 18                # grab zone (pixels) in the bottom-right corner
+CTRL_RESIZE_STEP = 0.0            # Ctrl+drag: 0 = smooth proportional scaling, e.g. 0.05 = snap to 5% steps
+RESIZE_INTERVAL_MS = 6            # resize redraw pacing: 6 ms between frames (~144 fps target)
+BG_SRC_SCALE = 2                  # background image is stored at this multiple so it stays sharp when scaled up
+
+# Window drag settings
+DRAG_INTERVAL_MS = 6              # ~144+ updates per second
+DRAG_SMOOTHING = 14.0             # higher = tighter follow, lower = more trailing/glide (try 8 to 25)
+PAUSE_ANIM_WHILE_DRAGGING = True  # freeze background lines while dragging for max smoothness
+
+# Collapsible boxes
+PANEL_X1 = 16
+PANEL_X2 = 504
+SECTION_HEADER_H = 36             # height of a box when closed (header only)
+SECTION_ANIM_MS = 700             # open/close duration - higher = slower
+SECTION_ANIM_INTERVAL_MS = 6      # 6 ms between frames (~144+ fps target) - used by EVERY box, incl. the Themes page
+PAUSE_BG_WHILE_SECTION_ANIM = True  # freeze background lines during open/close for max smoothness
+WIN_BOTTOM_PAD = 30               # empty space under the last box
+TILE_H = 32                       # height of the reusable middle tile of a box background
+
+# Theme Colors (Dark Gaming Aesthetic)
+BG_MAIN = "#12121f"
+ACCENT_PURPLE = "#5c52a2"
+ACCENT_BLUE = "#3b82f6"
+TEXT_LIGHT = "#e2e8f0"
+TEXT_MUTED = "#94a3b8"
+BTN_GREEN = "#166534"
+BTN_RED = "#991b1b"
+
+# Customisable colours (defaults)
+DEFAULT_LINE_COLOUR = "#3b82f6"
+DEFAULT_BORDER_COLOUR = "#3b82f6"
+DEFAULT_BOX_COLOUR = "#323256"
+
+PAGES = ("main", "prefs", "themes")   # page order (tabs, sliding direction)
+BG_IMAGE_FILE = "screenshot_background.jpg"   # working copy of the uploaded background image
+BG_IMG_H = 1000                   # the background image is prepared at WIN_W x BG_IMG_H (covers any window height)
+APPEARANCE_KEYS = ("notifications", "opacity", "bar_opacity", "box_opacity", "line_opacity",
+                   "box_radius", "anim_speed", "line_count", "spread",
+                   "line_colour", "border_colour", "box_colour", "image_opacity", "window_scale")
+
+PRESET_BTN_RADIUS = 7             # corner radius (out of 25, same scale as the Box Corner Radius slider)
+
+PRESET_THEMES = [
+    ("Default",   {"line": "#3b82f6", "border": "#3b82f6", "box": "#323256"}),
+    ("Cyberpunk", {"line": "#ff2bd6", "border": "#00f0ff", "box": "#2a0f45"}),
+    ("Sunset",    {"line": "#fb923c", "border": "#f43f5e", "box": "#4a1d2e"}),
+    ("Forest",    {"line": "#4ade80", "border": "#22c55e", "box": "#14342a"}),
+    ("Ocean",     {"line": "#38bdf8", "border": "#06b6d4", "box": "#0c3047"}),
+    ("Crimson",   {"line": "#ef4444", "border": "#dc2626", "box": "#3b1219"}),
+    ("Royal",     {"line": "#a78bfa", "border": "#8b5cf6", "box": "#2e1f5e"}),
+    ("Mono",      {"line": "#e5e7eb", "border": "#9ca3af", "box": "#2b2b2b"}),
+]
+
+PAGE_ANIM_MS = 700                # sideways slide + fade duration between the Main / Preferences pages
+FADE_STEPS = 20                   # how many brightness steps a page fades through (fewer = cheaper)
+BG_FRAME_MS = 6                   # background line animation delay (6 ms = ~144 fps target)
+TAB_Y = 48                        # vertical centre of the Main / Preferences tab row
+
+
+def parse_hex(value):
+    """Return '#rrggbb' if the text is a valid hex colour (with or without #), else None."""
+    v = str(value).strip().lstrip("#")
+    if re.fullmatch(r"[0-9a-fA-F]{6}", v):
+        return "#" + v.lower()
+    return None
+
+
+def hex_to_rgb(h):
+    h = h.lstrip("#")
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+
+def mix_hex(c1, c2, t):
+    """Blend two '#rrggbb' colours: t=0 gives c1, t=1 gives c2."""
+    a, b = hex_to_rgb(c1), hex_to_rgb(c2)
+    return "#{:02x}{:02x}{:02x}".format(*(int(round(a[i] + (b[i] - a[i]) * t)) for i in range(3)))
+
+
+def rounded_points(x1, y1, x2, y2, r=4):
+    """Point list for a rounded rectangle, to be drawn as a smooth polygon."""
+    r = min(r, (x2 - x1) / 2, (y2 - y1) / 2)
+    return [
+        x1 + r, y1,
+        x2 - r, y1,
+        x2, y1,
+        x2, y1 + r,
+        x2, y2 - r,
+        x2, y2,
+        x2 - r, y2,
+        x1 + r, y2,
+        x1, y2,
+        x1, y2 - r,
+        x1, y1 + r,
+        x1, y1
+    ]
+
+
+def round_rect_points(x1, y1, x2, y2, r, steps=6):
+    """Accurate rounded-rectangle outline (real circular corners) for a normal (non-smooth) polygon."""
+    r = max(0, min(r, (x2 - x1) / 2, (y2 - y1) / 2))
+    if r <= 0:
+        return [x1, y1, x2, y1, x2, y2, x1, y2]
+    pts = []
+    for cx, cy, a0 in ((x2 - r, y1 + r, -90), (x2 - r, y2 - r, 0),
+                       (x1 + r, y2 - r, 90), (x1 + r, y1 + r, 180)):
+        for i in range(steps + 1):
+            a = math.radians(a0 + 90.0 * i / steps)
+            pts += [cx + r * math.cos(a), cy + r * math.sin(a)]
+    return pts
+
+
+def ease_in_out_cubic(t):
+    if t < 0.5:
+        return 4 * t * t * t
+    return 1 - ((-2 * t + 2) ** 3) / 2
+
+
+def cover_resize(img, w, h, resample=Image.LANCZOS):
+    """Scale + centre-crop an image so it exactly fills w x h (like CSS background-size: cover)."""
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    s = max(w / img.width, h / img.height)
+    nw, nh = max(w, int(img.width * s + 0.5)), max(h, int(img.height * s + 0.5))
+    img = img.resize((nw, nh), resample)
+    left, top = (nw - w) // 2, (nh - h) // 2
+    return img.crop((left, top, left + w, top + h))
+
+
+def smoothstep(t):
+    t = min(max(t, 0.0), 1.0)
+    return t * t * (3 - 2 * t)
+
+
+def _ui_scale(canvas):
+    """Current (width scale, height scale). The app keeps it on the canvas for the drawn widgets."""
+    return getattr(canvas, "ui_scale", (1.0, 1.0))
+
+
+class Section:
+    """One box in the vertical stack. Panels can collapse to just their header."""
+    def __init__(self, key, title, top, full_h, gap, panel=True, page="main"):
+        self.key = key
+        self.page = page            # "main", "prefs" or "both" (which page shows this box)
+        self.title = title
+        self.top = top              # current top Y (updated as boxes above open/close)
+        self.full_h = full_h        # height when open
+        self.gap = gap              # space above this box
+        self.panel = panel          # False = fixed row (no box, can't collapse)
+        self.h = full_h             # current height
+        self.tag = f"sec_{key}"     # every item in the section carries this tag (moved together)
+        self.ctag = f"sec_{key}_c"  # plain content items (hidden while they don't fit)
+        self.htag = f"sec_{key}_h"  # header items (title + arrow, hidden when the box is squashed away)
+        self.p = 1.0                # 1.0 open ... 0.0 closed
+        self.target = 1.0
+        self.animating = False
+        self.anim_from = 1.0
+        self.anim_to = 1.0
+        self.anim_dur = 0.0
+        self.anim_start = 0.0
+        self.widgets = []           # sliders / checkboxes (hide themselves)
+        self.items = []             # [canvas_id, bottom_rel_to_top, visible]
+        self.chevron = None
+        self.x = 0                  # current horizontal offset (pages slide sideways)
+
+    def height(self):
+        if not self.panel:
+            return self.full_h
+        return int(round(SECTION_HEADER_H + (self.full_h - SECTION_HEADER_H) * self.p))
+
+
+class AutoClearEntry(tk.Entry):
+    """An Entry widget that displays a default value and clears it as soon as the user clicks to edit."""
+    def __init__(self, master, textvariable, default_value, **kwargs):
+        super().__init__(master, textvariable=textvariable, insertbackground="white", **kwargs)
+        self.textvariable = textvariable
+        self.default_value = default_value
+
+        if not self.textvariable.get():
+            self.textvariable.set(default_value)
+            self.config(fg="#64748b", bg="#161625", insertbackground="white")
+            self.is_default = True
+        else:
+            self.config(fg=TEXT_LIGHT, bg="#161625", insertbackground="white")
+            self.is_default = False
+
+        self.bind("<FocusIn>", self._on_focus_in)
+
+    def _on_focus_in(self, event):
+        if self.is_default:
+            self.textvariable.set("")
+            self.config(fg=TEXT_LIGHT)
+            self.is_default = False
+
+
+class CanvasLabel:
+    """Label-like wrapper around a canvas text item (supports .config(text=..., fg=...))."""
+    def __init__(self, canvas, x, y, text, fg, font, wrap=0, tags="ui_text"):
+        self.canvas = canvas
+        self.id = canvas.create_text(
+            x, y, text=text, fill=fg, font=font, anchor="w", width=wrap, tags=tags
+        )
+
+    def config(self, **kw):
+        opts = {}
+        if "text" in kw:
+            opts["text"] = kw["text"]
+        if "fg" in kw:
+            opts["fill"] = kw["fg"]
+        if opts:
+            self.canvas.itemconfig(self.id, **opts)
+
+
+class CanvasButton:
+    """Button drawn directly on the canvas with real rounded corners.
+    Being plain canvas items (not a native widget) it moves at full speed when its box opens/closes."""
+    def __init__(self, canvas, x1, y1, x2, y2, text, command, fill, fg, border,
+                 font=("Segoe UI", 9, "bold"), radius=PRESET_BTN_RADIUS, tags="ui_text"):
+        self.canvas = canvas
+        self.command = command
+        self.fill, self.fg, self.border = fill, fg, border
+        self.enabled = True
+        self.hovered = False
+
+        self.poly = canvas.create_polygon(
+            *round_rect_points(x1, y1, x2, y2, radius),
+            fill=fill, outline=border, width=1, tags=tags)
+        self.label = canvas.create_text(
+            (x1 + x2) / 2, (y1 + y2) / 2, text=text, fill=fg, font=font, tags=tags)
+
+        canvas.bind("<Button-1>", self._on_click, add="+")
+        canvas.bind("<Motion>", self._on_motion, add="+")
+
+    def hit(self, x, y):
+        """Is this (pixel) point on the button? Uses the live canvas position, so it follows every slide / scale."""
+        if self.canvas.itemcget(self.poly, "state") == "hidden":
+            return False
+        bb = self.canvas.bbox(self.poly)
+        return bb is not None and bb[0] <= x <= bb[2] and bb[1] <= y <= bb[3]
+
+    def _on_click(self, event):
+        if self.enabled and self.hit(event.x, event.y):
+            self.command()
+
+    def _on_motion(self, event):
+        h = self.enabled and self.hit(event.x, event.y)
+        if h != self.hovered:
+            self.hovered = h
+            self.refresh()
+
+    def refresh(self):
+        if self.enabled:
+            fill = mix_hex(self.fill, "#ffffff", 0.14) if self.hovered else self.fill
+            outline, fg = self.border, self.fg
+        else:
+            fill = mix_hex(self.fill, BG_MAIN, 0.55)
+            outline = mix_hex(self.border, BG_MAIN, 0.55)
+            fg = "#64748b"
+        self.canvas.itemconfigure(self.poly, fill=fill, outline=outline)
+        self.canvas.itemconfigure(self.label, fill=fg)
+
+    def config(self, **kw):
+        if "state" in kw:
+            self.enabled = kw["state"] != "disabled"
+            if not self.enabled:
+                self.hovered = False
+            self.refresh()
+
+
+class CanvasCheckbox:
+    """Checkbox drawn directly on the canvas (no solid widget patch), so background lines show through."""
+    def __init__(self, canvas, x, y, text, variable, fg, font, size=14, tags="ui_text"):
+        self.canvas = canvas
+        self.var = variable
+        self.enabled = True
+        self.visible = True
+
+        self.box = canvas.create_rectangle(
+            x, y - size / 2, x + size, y + size / 2,
+            outline=ACCENT_BLUE, width=1.5, fill="", tags=tags
+        )
+        self.tick = canvas.create_line(
+            x + 3, y, x + 6, y + 4, x + size - 3, y - 4,
+            fill=TEXT_LIGHT, width=2, tags=tags
+        )
+        self.label = canvas.create_text(
+            x + size + 8, y, text=text, fill=fg, font=font, anchor="w", tags=tags
+        )
+
+        bx = canvas.bbox(self.label)
+        self.hit_x = (x - 4, bx[2] + 4)     # layout (unscaled) coordinates
+
+        canvas.bind("<Button-1>", self._on_click, add="+")
+        variable.trace_add("write", lambda *a: self.refresh())
+        self.refresh()
+
+    def cur_y(self):
+        """Current centre Y in layout units (the box moves when other boxes above it open/close)."""
+        c = self.canvas.coords(self.box)
+        return (c[1] + c[3]) / 2 / _ui_scale(self.canvas)[1]
+
+    def shift_x(self, dx):
+        """The page slid sideways: move the click area with it."""
+        self.hit_x = (self.hit_x[0] + dx, self.hit_x[1] + dx)
+
+    def _on_click(self, event):
+        if not self.enabled or not self.visible:
+            return
+        sx, sy = _ui_scale(self.canvas)
+        ex, ey = event.x / sx, event.y / sy
+        cy = self.cur_y()
+        if self.hit_x[0] <= ex <= self.hit_x[1] and cy - 12 <= ey <= cy + 12:
+            self.var.set(not self.var.get())
+
+    def set_visible(self, visible):
+        """Show/hide the whole checkbox (used while its box opens/closes)."""
+        if visible == self.visible:
+            return
+        self.visible = visible
+        state = "normal" if visible else "hidden"
+        self.canvas.itemconfigure(self.box, state=state)
+        self.canvas.itemconfigure(self.label, state=state)
+        self.refresh()
+
+    def refresh(self):
+        show_tick = self.var.get() and self.visible
+        self.canvas.itemconfigure(self.tick, state="normal" if show_tick else "hidden")
+        outline = ACCENT_BLUE if self.enabled else "#475569"
+        text_col = TEXT_LIGHT if self.enabled else TEXT_MUTED
+        self.canvas.itemconfigure(self.box, outline=outline)
+        self.canvas.itemconfigure(self.tick, fill=text_col)
+        self.canvas.itemconfigure(self.label, fill=text_col)
+
+    def config(self, **kw):
+        if "state" in kw:
+            self.enabled = kw["state"] != "disabled"
+            self.refresh()
+
+
+class CanvasSlider:
+    """Slider drawn directly on the canvas (thin track + rounded handle), so background lines show through."""
+    def __init__(self, canvas, x0, x1, y, from_, to, resolution, variable, command=None, tags="ui_text"):
+        self.canvas = canvas
+        self.x0, self.x1 = x0, x1           # layout (unscaled) coordinates
+        self.from_, self.to, self.res = from_, to, resolution
+        self.var = variable
+        self.command = command
+        self.enabled = True
+        self.visible = True
+        self.dragging = False
+        self.extra_items = []   # extra canvas items (e.g. the slider's label) hidden together with it
+
+        # Decimal places to show, based on resolution
+        self.decimals = 0
+        r = resolution
+        while self.decimals < 4 and abs(r - round(r)) > 1e-9:
+            r *= 10
+            self.decimals += 1
+
+        self.track = canvas.create_line(
+            x0, y, x1, y, fill="#2b2b45", width=4, capstyle="round", tags=tags)
+        self.fill_line = canvas.create_line(
+            x0, y, x0, y, fill=ACCENT_BLUE, width=4, capstyle="round", tags=tags)
+        # Rounded handle (smooth polygon)
+        self.handle = canvas.create_polygon(
+            *rounded_points(x0 - 6, y - 9, x0 + 6, y + 9, 4),
+            smooth=True, fill=ACCENT_PURPLE, outline=TEXT_LIGHT, width=1, tags=tags)
+        self.text = canvas.create_text(
+            0, 0, anchor="s", fill=TEXT_LIGHT, font=("Segoe UI", 8), tags=tags)
+
+        canvas.bind("<Button-1>", self._press, add="+")
+        canvas.bind("<B1-Motion>", self._drag, add="+")
+        canvas.bind("<ButtonRelease-1>", self._release, add="+")
+        variable.trace_add("write", lambda *a: self.refresh())
+        self.refresh()
+
+    def cur_y(self):
+        """Current Y of the track in layout units (it moves when other boxes above it open/close)."""
+        return self.canvas.coords(self.track)[1] / _ui_scale(self.canvas)[1]
+
+    def shift_x(self, dx):
+        """The page slid sideways: shift the track's x range (the canvas items were moved already)."""
+        self.x0 += dx
+        self.x1 += dx
+
+    def _in_hit_area(self, event):
+        sx, sy = _ui_scale(self.canvas)
+        ex, ey = event.x / sx, event.y / sy
+        y = self.cur_y()
+        return (self.x0 - 10 <= ex <= self.x1 + 10 and
+                y - 14 <= ey <= y + 14)
+
+    def _press(self, event):
+        if self.enabled and self.visible and self._in_hit_area(event):
+            self.dragging = True
+            self._set_from_x(event.x / _ui_scale(self.canvas)[0])
+
+    def _drag(self, event):
+        if self.dragging:
+            self._set_from_x(event.x / _ui_scale(self.canvas)[0])
+
+    def _release(self, event):
+        self.dragging = False
+
+    def _set_from_x(self, x):
+        frac = min(max((x - self.x0) / (self.x1 - self.x0), 0.0), 1.0)
+        raw = self.from_ + frac * (self.to - self.from_)
+        steps = round((raw - self.from_) / self.res)
+        value = round(self.from_ + steps * self.res, 6)
+        value = min(max(value, self.from_), self.to)
+        if value != self.var.get():
+            self.var.set(value)
+            if self.command:
+                self.command(value)
+
+    def set_visible(self, visible):
+        """Show/hide the whole slider (used while its box opens/closes)."""
+        if visible == self.visible:
+            return
+        self.visible = visible
+        if not visible:
+            self.dragging = False
+        state = "normal" if visible else "hidden"
+        for item in (self.track, self.fill_line, self.handle, self.text, *self.extra_items):
+            self.canvas.itemconfigure(item, state=state)
+
+    def refresh(self):
+        try:
+            v = float(self.var.get())
+        except Exception:
+            return
+        frac = min(max((v - self.from_) / (self.to - self.from_), 0.0), 1.0)
+        hx = self.x0 + frac * (self.x1 - self.x0)
+        c = self.canvas
+        sx, sy = _ui_scale(c)
+        S = min(sx, sy)
+        y = self.cur_y()
+        px, py = hx * sx, y * sy
+        c.coords(self.fill_line, self.x0 * sx, py, px, py)
+        c.coords(self.handle, *rounded_points(px - 6 * S, py - 9 * S, px + 6 * S, py + 9 * S, 4 * S))
+        c.coords(self.text, px, py - 12 * S)
+
+        label = f"{v:.{self.decimals}f}"
+        c.itemconfigure(self.text, text=label)
+
+        track_col = "#2b2b45" if self.enabled else "#1f1f33"
+        fill_col = ACCENT_BLUE if self.enabled else "#475569"
+        handle_col = ACCENT_PURPLE if self.enabled else "#3b3b55"
+        text_col = TEXT_LIGHT if self.enabled else TEXT_MUTED
+        c.itemconfigure(self.track, fill=track_col)
+        c.itemconfigure(self.fill_line, fill=fill_col)
+        c.itemconfigure(self.handle, fill=handle_col)
+        c.itemconfigure(self.text, fill=text_col)
+
+    def config(self, **kw):
+        if "state" in kw:
+            self.enabled = kw["state"] != "disabled"
+            if not self.enabled:
+                self.dragging = False
+            self.refresh()
+
+
+class ScreenshotterApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Screenshotter")
+        self.root.geometry(f"{WIN_W}x{WIN_H}+100+10")
+        self.root.resizable(False, False)
+        self.root.configure(bg=BG_MAIN)
+
+        # Remove the native (white) title bar; a custom one is drawn on the canvas
+        self.root.overrideredirect(True)
+        self.minimized = False
+        self._dragging = False
+        self._native_drag = False
+        self._drag_dx = 0
+        self._drag_dy = 0
+        self._drag_hwnd = None
+        self._drag_off = (0, 0)
+        self._last_pos = (0, 0)
+        self._released = False
+        self._pos = [0.0, 0.0]
+        self._target = (0.0, 0.0)
+        self._last_t = 0.0
+
+        # Window scaling state (everything is laid out in "layout units"; scale turns them into pixels)
+        self.sx = 1.0                # width scale  (window width  = WIN_W * sx)
+        self.sy = 1.0                # height scale (window height = content height * sy)
+        self._rs_last = 0.0
+        self._font_scale_applied = 1.0
+        self._resizing = None        # None, "right", "bottom" or "corner" while a resize drag is active
+        self._rs_off = (0.0, 0.0)
+        self._rs_target = None
+        self._rs_job = None
+        self._scalables = []
+        self._ppp = 1.333
+        self._bg_cache = None
+
+        # Runtime state
+        self.is_armed = False
+        self.is_running = False
+        self.stop_thread = False
+        self.save_folder = ""
+        self.count = 1
+        self.worker_thread = None
+        self._save_job = None
+
+        # Collapsible box state
+        self.page = "main"
+        self.page_pos = 0.0       # 0.0 = Main page, 1.0 = Preferences page (animated)
+        self._page_anim = False
+        self._fade_q = {p: 1.0 for p in PAGES}        # current (stepped) opacity of each sliding page
+        self._snap = None                             # true colours of the page items while fading
+        self._panels_dirty = True
+        self._bar_sig = None
+        self._timer_refs = 0
+        self.page_from = 0.0
+        self.page_to = 0.0
+        self.page_dur = 0.0
+        self.page_start = 0.0
+        self.stack = []
+        self.win_h = WIN_H              # current window height (layout units)
+        self._anim_job = None
+        self._timer_res_on = False
+
+        # Smooth cursor network animation particles (layout units)
+        self.mouse_x = WIN_W / 2
+        self.mouse_y = WIN_H / 2
+        self.target_x = WIN_W / 2
+        self.target_y = WIN_H / 2
+
+        # Particle count is driven by the Line Count slider
+        self.particles = []
+
+        # Caches of translucent panel images
+        self.panel_cache = {}
+        self.bar_cache = {}
+
+        # Load saved configuration if it exists
+        saved_config = self.load_config()
+
+        # Configuration variables
+        self.dir_var = tk.StringVar(value=saved_config.get("dir", ""))
+        self.max_shots_var = tk.StringVar(value=saved_config.get("max_shots", ""))
+        self.max_mb_var = tk.StringVar(value=saved_config.get("max_mb", ""))
+        self.delay_var = tk.StringVar(value=saved_config.get("delay", ""))
+        self.name_var = tk.StringVar(value=saved_config.get("name", ""))
+        self.toggle_key_var = tk.StringVar(value=saved_config.get("toggle_key", ""))
+        self.single_key_var = tk.StringVar(value=saved_config.get("single_key", ""))
+        self.quit_key_var = tk.StringVar(value=saved_config.get("quit_key", ""))
+        self.notify_var = tk.BooleanVar(value=saved_config.get("notifications", True))
+        self.opacity_var = tk.DoubleVar(value=saved_config.get("opacity", 0.95))
+        self.box_opacity_var = tk.DoubleVar(value=saved_config.get("box_opacity", 0.4))
+        self.line_opacity_var = tk.DoubleVar(value=saved_config.get("line_opacity", 0.8))
+        self.box_radius_var = tk.DoubleVar(value=saved_config.get("box_radius", 12.0))
+        self.anim_speed_var = tk.DoubleVar(value=saved_config.get("anim_speed", 1.0))
+        self.line_count_var = tk.DoubleVar(
+            value=min(MAX_LINES_LIMIT, saved_config.get("line_count", 60)))
+        self.spread_var = tk.DoubleVar(value=saved_config.get("spread", 0.5))
+        self.bar_opacity_var = tk.DoubleVar(value=saved_config.get("bar_opacity", 0.85))
+
+        # Colour settings (hex strings)
+        self.line_colour_var = tk.StringVar(value=saved_config.get("line_colour", DEFAULT_LINE_COLOUR))
+        self.border_colour_var = tk.StringVar(value=saved_config.get("border_colour", DEFAULT_BORDER_COLOUR))
+        self.box_colour_var = tk.StringVar(value=saved_config.get("box_colour", DEFAULT_BOX_COLOUR))
+        self.colour_widgets = []
+        self.theme_widgets = []
+        self.image_opacity_var = tk.DoubleVar(value=saved_config.get("image_opacity", 0.5))
+        self.bg_src = None            # prepared background image (PIL, WIN_W*k x BG_IMG_H*k) or None
+        self._bg_photo = None
+
+        # Apply initial window opacity
+        self.root.attributes('-alpha', self.opacity_var.get())
+
+        # Validated runtime values
+        self.max_screenshots = 0
+        self.max_folder_size_mb = 0.0
+        self.interval = 0.0
+        self.file_prefix = "screenshot"
+        self.toggle_hotkey = ""
+        self.single_hotkey = ""
+        self.quit_hotkey = ""
+        self.send_notifications = True
+
+        self.themed_widgets = []
+        self.build_ui()
+        self.update_box_theme()
+
+        # Background image (if one was saved) and live re-render when its opacity changes
+        self._load_bg_source()
+        self.render_background()
+        self.image_opacity_var.trace_add("write", lambda *a: self.render_background())
+
+        # Lay out the starting page (the Preferences page waits off to the right)
+        self._apply_layout(self.stack)
+
+        # Auto-save appearance settings whenever they change
+        for var in (self.opacity_var, self.bar_opacity_var, self.box_opacity_var,
+                    self.line_opacity_var, self.box_radius_var, self.anim_speed_var,
+                    self.line_count_var, self.spread_var, self.notify_var,
+                    self.line_colour_var, self.border_colour_var, self.box_colour_var,
+                    self.image_opacity_var):
+            var.trace_add("write", lambda *a: self.schedule_save())
+
+        # Box look changed -> redraw the translucent boxes on the next frame
+        for var in (self.box_opacity_var, self.box_radius_var,
+                    self.box_colour_var, self.border_colour_var):
+            var.trace_add("write", lambda *a: setattr(self, "_panels_dirty", True))
+
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+        # Cursor tracking, title bar dragging, window resizing & smooth network animation
+        self.root.bind("<Motion>", self.on_mouse_motion)
+        self.root.bind("<Map>", self.on_map)
+        self.bg_canvas.bind("<ButtonPress-1>", self.bar_press, add="+")
+        self.bg_canvas.bind("<ButtonPress-1>", self.section_press, add="+")
+        self.bg_canvas.bind("<ButtonPress-1>", self.tab_press, add="+")
+        self.bg_canvas.bind("<ButtonPress-1>", self.resize_press, add="+")
+        self.bg_canvas.bind("<B1-Motion>", self.bar_drag, add="+")
+        self.bg_canvas.bind("<B1-Motion>", self.resize_drag, add="+")
+        self.bg_canvas.bind("<ButtonRelease-1>", self.bar_release, add="+")
+        self.bg_canvas.bind("<ButtonRelease-1>", self.resize_release, add="+")
+        self.bg_canvas.bind("<Motion>", self.bar_hover, add="+")
+
+        # Restore the window size from last time
+        try:
+            old = float(saved_config.get("window_scale", 1.0))
+            self.set_scale(float(saved_config.get("window_sx", old)),
+                           float(saved_config.get("window_sy", old)))
+        except (TypeError, ValueError):
+            pass
+        self._place_grip()
+
+        self.root.after(50, self.show_in_taskbar)
+        self._set_timer_resolution(True)     # fine Windows timer so 6 ms frames really run at ~6 ms
+        self._bg_last = time.perf_counter()
+        self.animate_background()
+
+    @property
+    def scale(self):
+        """Uniform scale used for text, line widths and corner radii (the smaller of width / height scale)."""
+        return min(self.sx, self.sy)
+
+    # ---------- Colour helpers ----------
+    def _rgb(self, var, default):
+        """RGB tuple from a hex variable; falls back to the default while the text is invalid."""
+        return hex_to_rgb(parse_hex(var.get()) or default)
+
+    def _refresh_swatch(self, var, swatch, entry):
+        ok = parse_hex(var.get())
+        if ok:
+            swatch.config(bg=ok, activebackground=ok)
+        entry.config(fg=TEXT_LIGHT if ok else "#ef4444")
+
+    def pick_colour(self, var, title, default):
+        current = parse_hex(var.get()) or default
+        result = colorchooser.askcolor(color=current, title=title, parent=self.root)
+        if result and result[1]:
+            var.set(result[1])
+
+    # ---------- Window scaling ----------
+    def _max_scales(self):
+        """Largest width / height scale that still fits on the screen."""
+        try:
+            sw = self.root.winfo_screenwidth()
+            sh = self.root.winfo_screenheight() - 80
+            return (max(MIN_SCALE, min(MAX_SCALE, sw / WIN_W)),
+                    max(MIN_SCALE, min(MAX_SCALE, sh / self.win_h)))
+        except Exception:
+            return MAX_SCALE, MAX_SCALE
+
+    def _font_base(self, spec):
+        """(family, size in pixels, weight, slant) of any Tk font description, or None."""
+        try:
+            a = tkfont.Font(root=self.root, font=spec).actual()
+            size = a["size"]
+            px = -size if size < 0 else size * self._ppp
+            return (a["family"], max(1.0, px), a["weight"], a["slant"])
+        except tk.TclError:
+            return None
+
+    def _font_spec(self, base):
+        family, px, weight, slant = base
+        spec = [family, -max(1, int(round(px * self.scale)))]
+        if weight == "bold":
+            spec.append("bold")
+        if slant == "italic":
+            spec.append("italic")
+        return tuple(spec)
+
+    def _index_scalables(self):
+        """Remember the original font / line width / widget size of every static item so it can be rescaled."""
+        c = self.bg_canvas
+        self._ppp = self.root.winfo_fpixels("1p")
+        self._scalables = []
+        for item in c.find_all():
+            kind = c.type(item)
+            rec = {"item": item, "kind": kind}
+            if kind == "text":
+                rec["font"] = self._font_base(c.itemcget(item, "font"))
+                w = float(c.itemcget(item, "width") or 0)
+                if w > 0:
+                    rec["width"] = w
+            elif kind in ("line", "rectangle", "polygon"):
+                rec["lw"] = float(c.itemcget(item, "width"))
+            elif kind == "window":
+                try:
+                    widget = self.root.nametowidget(c.itemcget(item, "window"))
+                except Exception:
+                    continue
+                rec["widget"] = widget
+                w = float(c.itemcget(item, "width") or 0)
+                h = float(c.itemcget(item, "height") or 0)
+                if w > 0:
+                    rec["width"] = w
+                if h > 0:
+                    rec["height"] = h
+                try:
+                    rec["font"] = self._font_base(widget.cget("font"))
+                except tk.TclError:
+                    pass
+            else:
+                continue
+            self._scalables.append(rec)
+
+    def _rescale_items(self):
+        """Apply the current scale to fonts, line widths and widget sizes (positions are scaled by canvas.scale).
+        Fonts / line widths only change when the uniform scale changes, which keeps a one-axis drag cheap."""
+        c = self.bg_canvas
+        sx, sy, S = self.sx, self.sy, self.scale
+        do_fonts = abs(S - self._font_scale_applied) > 1e-4
+        self._font_scale_applied = S
+        for r in self._scalables:
+            item, kind = r["item"], r["kind"]
+            fspec = None
+            if do_fonts and r.get("font"):
+                fspec = self._font_spec(r["font"])
+            try:
+                if kind == "text":
+                    opts = {}
+                    if fspec:
+                        opts["font"] = fspec
+                    if "width" in r:
+                        opts["width"] = r["width"] * sx
+                    if opts:
+                        c.itemconfigure(item, **opts)
+                elif kind == "window":
+                    opts = {}
+                    if "width" in r:
+                        opts["width"] = r["width"] * sx
+                    if "height" in r:
+                        opts["height"] = r["height"] * sy
+                    if opts:
+                        c.itemconfigure(item, **opts)
+                    if fspec:
+                        r["widget"].config(font=fspec)
+                elif do_fonts:
+                    c.itemconfigure(item, width=r["lw"] * S)
+            except tk.TclError:
+                pass
+
+    def set_scale(self, sx=None, sy=None, fast=False):
+        """Scale the window freely: width and height scale independently and the whole GUI follows.
+        fast=True uses a cheaper background-image resample (used while dragging)."""
+        maxx, maxy = self._max_scales()
+        sx = self.sx if sx is None else sx
+        sy = self.sy if sy is None else sy
+        sx = min(max(float(sx), MIN_SCALE), maxx)
+        sy = min(max(float(sy), MIN_SCALE), maxy)
+        if abs(sx - self.sx) < 0.001 and abs(sy - self.sy) < 0.001:
+            return
+        kx, ky = sx / self.sx, sy / self.sy
+        self.sx, self.sy = sx, sy
+        c = self.bg_canvas
+        c.ui_scale = (sx, sy)
+
+        c.delete("panel_bg")
+        c.delete("bar_bg")
+        c.scale("all", 0, 0, kx, ky)        # moves every item to its new position
+        self._rescale_items()               # fonts, line widths, widget sizes
+        for sec in self.stack:
+            for w in sec.widgets:
+                w.refresh()
+
+        self.panel_cache.clear()
+        self.bar_cache.clear()
+        self._draw_bar()
+        self.render_background(fast=fast)
+        self._update_geometry()
+        self._apply_layout([])              # redraws boxes, tabs and arrows at the new size
+        self._panels_dirty = False
+        self.schedule_save()
+
+    def _update_geometry(self):
+        w = int(round(WIN_W * self.sx))
+        h = int(round(self.win_h * self.sy))
+        self.root.geometry(f"{w}x{h}")
+        self._place_grip()
+
+    def _place_grip(self):
+        """Little diagonal grip marks in the bottom-right corner (the resize handle)."""
+        c = self.bg_canvas
+        c.delete("grip")
+        S = self.scale
+        w, h = WIN_W * self.sx, self.win_h * self.sy
+        for i in range(3):
+            off = (5 + 4 * i) * S
+            c.create_line(w - 3 * S, h - off, w - off, h - 3 * S,
+                          fill="#475569", width=max(1.0, S), tags="grip")
+        c.tag_raise("grip")
+
+    def _resize_zone(self, x, y):
+        """Which resize area (pixel position) is the point in: 'corner', 'right', 'bottom' or None."""
+        w, h = WIN_W * self.sx, self.win_h * self.sy
+        if x >= w - RESIZE_CORNER and y >= h - RESIZE_CORNER:
+            return "corner"
+        if x >= w - RESIZE_EDGE and y >= BAR_H * self.sy:
+            return "right"
+        if y >= h - RESIZE_EDGE:
+            return "bottom"
+        return None
+
+    def resize_press(self, event):
+        zone = self._resize_zone(event.x, event.y)
+        if zone is None:
+            return
+        self._resizing = zone
+        self._rs_off = (WIN_W * self.sx - event.x, self.win_h * self.sy - event.y)   # cursor-to-edge distance
+        self._rs_target = None
+        self._rs_last = 0.0
+        self._set_timer_resolution(True)     # fine timer so the 6 ms pacing is real
+
+    def resize_drag(self, event):
+        if not self._resizing:
+            return
+        tx = (event.x + self._rs_off[0]) / WIN_W
+        ty = (event.y + self._rs_off[1]) / self.win_h
+        if event.state & 0x4:
+            # Ctrl held: scale proportionally (width and height together, like a uniform zoom)
+            if self._resizing == "right":
+                t = tx
+            elif self._resizing == "bottom":
+                t = ty
+            else:
+                t = (tx + ty) / 2.0
+            if CTRL_RESIZE_STEP > 0:
+                t = round(t / CTRL_RESIZE_STEP) * CTRL_RESIZE_STEP
+            t = min(t, *self._max_scales())
+            tx = ty = t
+        else:
+            if self._resizing == "bottom":
+                tx = None
+            elif self._resizing == "right":
+                ty = None
+        self._rs_target = (tx, ty)
+        # Always draw the latest size, paced at RESIZE_INTERVAL_MS (6 ms) between frames
+        if self._rs_job is None:
+            wait = max(1, int(RESIZE_INTERVAL_MS - (time.perf_counter() - self._rs_last) * 1000.0))
+            self._rs_job = self.root.after(wait, self._resize_apply)
+
+    def _resize_apply(self):
+        self._rs_job = None
+        t = self._rs_target
+        if t is not None:
+            self.set_scale(t[0], t[1], fast=True)
+        self._rs_last = time.perf_counter()
+
+    def resize_release(self, event):
+        if not self._resizing:
+            return
+        self._resizing = None
+        if self._rs_job is not None:
+            self.root.after_cancel(self._rs_job)
+            self._rs_job = None
+        t, self._rs_target = self._rs_target, None
+        if t is not None:
+            self.set_scale(t[0], t[1])
+        self.render_background()             # full-quality background after the fast drag frames
+        self._set_timer_resolution(False)
+
+    # ---------- Collapsible boxes ----------
+    def _header_at(self, x, y):
+        """Return the box whose header (top 28 px, layout units) is at this point, if any."""
+        for s in self.stack:
+            if (s.panel and s.h >= 30 and s.top <= y <= s.top + 27
+                    and PANEL_X1 + s.x <= x <= PANEL_X2 + s.x):
+                return s
+        return None
+
+    def section_press(self, event):
+        s = self._header_at(event.x / self.sx, event.y / self.sy)
+        if s is not None:
+            self.toggle_section(s)
+
+    def _tab_at(self, x, y):
+        """Return 'main' / 'prefs' if the point (layout units) is over a tab, else None."""
+        if not (TAB_Y - 14 <= y <= TAB_Y + 16):
+            return None
+        for key, _, x0, x1 in self.tab_defs:
+            if x0 <= x <= x1:
+                return key
+        return None
+
+    def tab_press(self, event):
+        key = self._tab_at(event.x / self.sx, event.y / self.sy)
+        if key is not None:
+            self.goto_page(key)
+
+    def _update_tabs(self):
+        """Slide the underline between the tabs and highlight the active one."""
+        sx, sy = self.sx, self.sy
+        n = len(self.tab_defs)
+        pos = min(max(self.page_pos, 0.0), n - 1.0)
+        i = min(int(pos), n - 2)
+        frac = pos - i
+        _, _, a0, a1 = self.tab_defs[i]
+        _, _, b0, b1 = self.tab_defs[i + 1]
+        x0 = a0 + (b0 - a0) * frac
+        x1 = a1 + (b1 - a1) * frac
+        self.bg_canvas.coords(self.tab_indicator, x0 * sx, (TAB_Y + 14) * sy, x1 * sx, (TAB_Y + 14) * sy)
+        active = int(round(pos))
+        for idx, (key, _, _, _) in enumerate(self.tab_defs):
+            self.bg_canvas.itemconfigure(self.tab_texts[key], fill=TEXT_LIGHT if idx == active else TEXT_MUTED)
+
+    def _blend_colour(self, colour, a):
+        """Colour blended toward the window background (a=1 unchanged, a=0 fully background)."""
+        r, g, b = self.root.winfo_rgb(colour)
+        r, g, b = r >> 8, g >> 8, b >> 8
+        return "#{:02x}{:02x}{:02x}".format(
+            int(18 + (r - 18) * a), int(18 + (g - 18) * a), int(31 + (b - 31) * a))
+
+    def _take_snapshot(self):
+        """Remember the true colours of every item (and widget) on the two sliding pages."""
+        c = self.bg_canvas
+        snap = {p: [] for p in PAGES}
+        for s in self.stack:
+            if s.page not in snap:
+                continue
+            for item in c.find_withtag(s.tag):
+                kind = c.type(item)
+                if kind in ("text", "line"):
+                    opts = ["fill"]
+                elif kind == "rectangle":
+                    opts = ["outline"]
+                elif kind == "polygon":
+                    opts = ["fill", "outline"]
+                elif kind == "window":
+                    try:
+                        w = self.root.nametowidget(c.itemcget(item, "window"))
+                    except Exception:
+                        continue
+                    wopts = (["bg", "fg", "activebackground", "activeforeground",
+                              "highlightbackground", "highlightcolor"]
+                             if isinstance(w, tk.Button) else
+                             ["bg", "fg", "highlightbackground", "highlightcolor"])
+                    vals = {}
+                    for o in wopts:
+                        try:
+                            vals[o] = w.cget(o)
+                        except tk.TclError:
+                            pass
+                    snap[s.page].append(("widget", w, vals))
+                    continue
+                else:
+                    continue
+                vals = {}
+                for o in opts:
+                    v = c.itemcget(item, o)
+                    if v:
+                        vals[o] = v
+                if vals:
+                    snap[s.page].append(("item", item, vals))
+        return snap
+
+    def _apply_colours(self, entries, a):
+        c = self.bg_canvas
+        for kind, target, vals in entries:
+            conf = {o: (v if a >= 1.0 else self._blend_colour(v, a)) for o, v in vals.items()}
+            try:
+                if kind == "item":
+                    c.itemconfigure(target, **conf)
+                else:
+                    target.config(**conf)
+            except tk.TclError:
+                pass
+
+    def _update_fade(self):
+        """Fade pages out as they slide away and in as they arrive, so pages never overlap visibly."""
+        pg = self.page_pos
+        if not self._page_anim and float(pg).is_integer():
+            # Settled: put the true colours back and stop fading
+            if self._snap is not None:
+                for page in PAGES:
+                    self._apply_colours(self._snap[page], 1.0)
+                self._snap = None
+            self._fade_q = {p: 1.0 for p in PAGES}
+            return
+
+        if self._snap is None:
+            self._snap = self._take_snapshot()
+
+        for idx, page in enumerate(PAGES):
+            a = smoothstep(1.0 - 2.0 * abs(pg - idx))
+            q = round(a * FADE_STEPS) / FADE_STEPS
+            if q != self._fade_q.get(page):
+                self._fade_q[page] = q
+                self._apply_colours(self._snap[page], q)
+
+    def goto_page(self, page):
+        """Switch pages: both pages slide sideways together."""
+        if page == self.page:
+            return
+        self.page = page
+        self.page_from = self.page_pos
+        self.page_to = float(PAGES.index(page))
+        self.page_dur = max(0.05, (PAGE_ANIM_MS / 1000.0) * min(abs(self.page_to - self.page_from), 1.6))
+        self.page_start = time.perf_counter()
+        self._page_anim = True
+        if self._anim_job is None:
+            self._set_timer_resolution(True)
+            self._anim_tick()
+
+    def toggle_section(self, s):
+        s.target = 0.0 if s.target > 0.5 else 1.0
+        s.anim_from = s.p
+        s.anim_to = s.target
+        # Same speed even if the click interrupts a half-finished animation
+        s.anim_dur = max(0.05, (SECTION_ANIM_MS / 1000.0) * abs(s.anim_to - s.anim_from))
+        s.anim_start = time.perf_counter()
+        s.animating = True
+        if self._anim_job is None:
+            self._set_timer_resolution(True)
+            self._anim_tick()
+
+    def _set_timer_resolution(self, on):
+        """Finer Windows timer resolution so a 6 ms timer really fires every ~6 ms (reference counted)."""
+        if os.name != "nt":
+            return
+        try:
+            if on:
+                ctypes.windll.winmm.timeBeginPeriod(1)
+                self._timer_refs += 1
+            elif self._timer_refs > 0:
+                ctypes.windll.winmm.timeEndPeriod(1)
+                self._timer_refs -= 1
+        except Exception:
+            pass
+
+    def _anim_tick(self):
+        t0 = time.perf_counter()
+        changed = []
+        still_running = False
+
+        for s in self.stack:
+            moved = False
+            if s.animating:
+                t = (t0 - s.anim_start) / s.anim_dur
+                t = min(max(t, 0.0), 1.0)
+                if t >= 1.0:
+                    s.p = s.anim_to
+                    s.animating = False
+                else:
+                    s.p = s.anim_from + (s.anim_to - s.anim_from) * ease_in_out_cubic(t)
+                    still_running = True
+                moved = True
+            if moved:
+                changed.append(s)
+
+        page_moved = False
+        if self._page_anim:
+            t = (t0 - self.page_start) / self.page_dur
+            t = min(max(t, 0.0), 1.0)
+            if t >= 1.0:
+                self.page_pos = self.page_to
+                self._page_anim = False
+            else:
+                self.page_pos = self.page_from + (self.page_to - self.page_from) * ease_in_out_cubic(t)
+                still_running = True
+            page_moved = True
+
+        if changed or page_moved:
+            self._apply_layout(changed)
+
+        if still_running:
+            # Subtract the time this frame took so the cadence stays near the target interval
+            work_ms = (time.perf_counter() - t0) * 1000.0
+            delay = max(1, int(SECTION_ANIM_INTERVAL_MS - work_ms))
+            self._anim_job = self.root.after(delay, self._anim_tick)
+        else:
+            self._anim_job = None
+            self._set_timer_resolution(False)
+
+    def _apply_layout(self, changed):
+        c = self.bg_canvas
+        pg = self.page_pos
+        sx, sy = self.sx, self.sy
+
+        # Stack each page's own boxes from the top
+        tops = {}
+        ends = {}
+        for page in PAGES:
+            y = 0
+            for s in self.stack:
+                if s.page == page:
+                    y += s.gap
+                    s.h = s.height()
+                    tops[s.key] = y
+                    y += s.h
+            ends[page] = y
+
+        # Shared boxes (buttons, status) sit under the page that is showing and glide between page heights
+        pos = min(max(pg, 0.0), len(PAGES) - 1.0)
+        i = min(int(pos), len(PAGES) - 2)
+        frac = pos - i
+        y = ends[PAGES[i]] + (ends[PAGES[i + 1]] - ends[PAGES[i]]) * frac
+        for s in self.stack:
+            if s.page == "both":
+                y += s.gap
+                s.h = s.height()
+                tops[s.key] = int(round(y))
+                y += s.h
+
+        # Resize the window so there is no empty space at the bottom
+        new_h = int(round(y)) + WIN_BOTTOM_PAD
+        if new_h != self.win_h:
+            self.win_h = new_h
+            self._update_geometry()
+
+        # Slide the pages sideways and move everything to its new row
+        for s in self.stack:
+            if s.page == "both":
+                nx = 0
+            else:
+                nx = int(round((PAGES.index(s.page) - pg) * WIN_W))
+            dx = nx - s.x
+            dy = tops[s.key] - s.top
+            if dx or dy:
+                c.move(s.tag, dx * sx, dy * sy)
+            if dx:
+                for w in s.widgets:
+                    w.shift_x(dx)
+            s.x = nx
+            s.top = tops[s.key]
+
+        for s in changed:
+            self._update_visibility(s)
+        for s in self.stack:
+            self._update_chevron(s)
+        self._update_tabs()
+        self._update_fade()
+
+        self.draw_panels()
+
+    def _update_visibility(self, s):
+        """Hide the controls that no longer fit inside a box that is closing/opening."""
+        c = self.bg_canvas
+        for rec in s.items:
+            vis = rec[1] <= s.h - rec[3]
+            if vis != rec[2]:
+                c.itemconfigure(rec[0], state="normal" if vis else "hidden")
+                rec[2] = vis
+        wlimit = s.h - 6
+        for w in s.widgets:
+            w.set_visible((w.cur_y() - s.top) + 18 <= wlimit)
+
+    def _update_chevron(self, s):
+        """Draw the arrow: 'V' when open, rotating to '>' when closed."""
+        if s.chevron is None:
+            return
+        sx, sy, S = self.sx, self.sy, self.scale
+        ang = math.radians(-90 * (1 - s.p))
+        cos_a, sin_a = math.cos(ang), math.sin(ang)
+        cx, cy = PANEL_X1 + s.x + 16, s.top + 16
+        pts = []
+        for (x, y) in ((-5, -3), (0, 3), (5, -3)):
+            pts += [cx * sx + (x * cos_a - y * sin_a) * S, cy * sy + (x * sin_a + y * cos_a) * S]
+        self.bg_canvas.coords(s.chevron, *pts)
+
+    def _index_sections(self):
+        """Remember the (relative) bottom edge of every plain item so it can be hidden when it doesn't fit."""
+        c = self.bg_canvas
+        for s in self.stack:
+            if not s.panel:
+                continue
+            s.items = []
+            for tag, margin in ((s.ctag, 8), (s.htag, 4)):
+                for item in c.find_withtag(tag):
+                    bb = c.bbox(item)
+                    if bb:
+                        s.items.append([item, bb[3] - s.top, True, margin])
+
+    # ---------- Panel backgrounds (cheap to redraw at high frame rates) ----------
+    def _mid_tile(self, w, mh, a, ba, fill, border):
+        key = ("mid", w, mh, a, ba, fill, border)
+        img = self.panel_cache.get(key)
+        if img is None:
+            im = Image.new("RGBA", (w, mh), fill + (a,))
+            d = ImageDraw.Draw(im)
+            d.line([(0, 0), (0, mh - 1)], fill=border + (ba,))
+            d.line([(w - 1, 0), (w - 1, mh - 1)], fill=border + (ba,))
+            img = ImageTk.PhotoImage(im)
+            self.panel_cache[key] = img
+        return img
+
+    def _panel_parts(self, w, h, radius, alpha, fade=1.0):
+        """Split a box background into a top cap, reusable middle tiles and a bottom cap.
+        w, h and radius are layout units; the images are built at the current width / height scale."""
+        sx, sy, S = self.sx, self.sy, self.scale
+        wp = max(1, int(round(w * sx)))
+        hp = max(2, int(round(h * sy)))
+        tile = max(1, int(round(TILE_H * sy)))
+        a = int(255 * alpha * fade)      # fill opacity (box opacity x page fade)
+        ba = int(255 * fade)             # border opacity (page fade)
+        fill = self._rgb(self.box_colour_var, DEFAULT_BOX_COLOUR)
+        border = self._rgb(self.border_colour_var, DEFAULT_BORDER_COLOUR)
+        r = max(0, min(int(round(radius * S)), hp // 2, wp // 2))
+        cap = max(1, r)
+        key = ("cap", wp, cap, r, a, ba, fill, border)
+        caps = self.panel_cache.get(key)
+        if caps is None:
+            im = Image.new("RGBA", (wp, 2 * cap), (0, 0, 0, 0))
+            d = ImageDraw.Draw(im)
+            if r > 0:
+                d.rounded_rectangle(
+                    [0, 0, wp - 1, 2 * cap - 1], radius=r,
+                    fill=fill + (a,), outline=border + (ba,), width=1)
+            else:
+                d.rectangle(
+                    [0, 0, wp - 1, 2 * cap - 1],
+                    fill=fill + (a,), outline=border + (ba,), width=1)
+            caps = (ImageTk.PhotoImage(im.crop((0, 0, wp, cap))),
+                    ImageTk.PhotoImage(im.crop((0, cap, wp, 2 * cap))))
+            self.panel_cache[key] = caps
+
+        parts = [(0, caps[0])]
+        y = cap
+        mid = hp - 2 * cap
+        while mid > 0:
+            mh = min(tile, mid)
+            parts.append((y, self._mid_tile(wp, mh, a, ba, fill, border)))
+            y += mh
+            mid -= mh
+        parts.append((y, caps[1]))
+        return parts
+
+    def draw_panels(self, reorder=True):
+        c = self.bg_canvas
+        c.delete("panel_bg")
+        if len(self.panel_cache) > 200:
+            self.panel_cache.clear()
+
+        sx, sy = self.sx, self.sy
+        alpha = self.box_opacity_var.get()
+        radius = self.box_radius_var.get()
+        w = PANEL_X2 - PANEL_X1
+        for s in self.stack:
+            if not s.panel or s.h < 4 or abs(s.x) >= WIN_W:
+                continue
+            fade = self._fade_q.get(s.page, 1.0)
+            if fade <= 0.0:
+                continue
+            left = int(round((PANEL_X1 + s.x) * sx))
+            top = int(round(s.top * sy))
+            for off, img in self._panel_parts(w, s.h, radius, alpha, fade):
+                c.create_image(left, top + off, image=img, anchor="nw", tags="panel_bg")
+
+        if reorder:
+            # Boxes sit above the lines but below the title bar and all text/widgets
+            c.tag_lower("panel_bg")
+            c.tag_lower("net")
+            c.tag_lower("bg_img")
+
+    # ---------- Custom title bar ----------
+    def show_in_taskbar(self):
+        """Borderless windows are hidden from the taskbar by default on Windows; undo that."""
+        if os.name != "nt":
+            return
+        try:
+            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+            style = ctypes.windll.user32.GetWindowLongW(hwnd, -20)
+            style = (style & ~0x00000080) | 0x00040000  # remove TOOLWINDOW, add APPWINDOW
+            ctypes.windll.user32.SetWindowLongW(hwnd, -20, style)
+            self.root.withdraw()
+            self.root.after(10, self.root.deiconify)
+        except Exception:
+            pass
+
+    def minimize_window(self):
+        self.minimized = True
+        self.root.overrideredirect(False)
+        self.root.iconify()
+
+    def on_map(self, event):
+        if event.widget is self.root and self.minimized:
+            self.minimized = False
+            self.root.overrideredirect(True)
+            self.root.after(10, self.show_in_taskbar)
+
+    def bar_press(self, event):
+        lx, ly = event.x / self.sx, event.y / self.sy
+        if ly >= BAR_H:
+            return
+        if lx >= WIN_W - 36:
+            self.on_close()
+        elif lx >= WIN_W - 72:
+            self.minimize_window()
+        else:
+            self._dragging = True
+            self._native_drag = False
+            if os.name == "nt":
+                try:
+                    self._start_native_drag()
+                except Exception:
+                    self._native_drag = False
+            if not self._native_drag:
+                self._drag_dx = event.x_root - self.root.winfo_x()
+                self._drag_dy = event.y_root - self.root.winfo_y()
+
+    def _start_native_drag(self):
+        """High-rate drag: the window eases toward the cursor and is moved with SetWindowPos."""
+        user32 = ctypes.windll.user32
+        user32.GetParent.restype = wt.HWND
+        user32.GetParent.argtypes = [wt.HWND]
+        user32.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int, ctypes.c_int,
+                                        ctypes.c_int, ctypes.c_int, wt.UINT]
+        user32.SetWindowPos.restype = wt.BOOL
+
+        hwnd = user32.GetParent(self.root.winfo_id())
+        pt = wt.POINT()
+        rect = wt.RECT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+
+        self._drag_hwnd = hwnd
+        self._drag_off = (pt.x - rect.left, pt.y - rect.top)
+        self._pos = [float(rect.left), float(rect.top)]      # smoothed position
+        self._target = (float(rect.left), float(rect.top))   # where the cursor wants the window
+        self._last_pos = (rect.left, rect.top)
+        self._last_t = time.perf_counter()
+        self._released = False
+        self._native_drag = True
+
+        # Finer Windows timer resolution so the 6 ms timer actually fires that fast
+        try:
+            ctypes.windll.winmm.timeBeginPeriod(1)
+        except Exception:
+            pass
+
+        self._drag_tick()
+
+    def _drag_tick(self):
+        if not (self._dragging and self._native_drag):
+            return
+        user32 = ctypes.windll.user32
+
+        now = time.perf_counter()
+        dt = min(now - self._last_t, 0.05)
+        self._last_t = now
+
+        # Track the cursor while the button is held; after release, keep gliding to the last target
+        if not self._released:
+            if not (user32.GetAsyncKeyState(0x01) & 0x8000):
+                self._released = True
+            else:
+                pt = wt.POINT()
+                user32.GetCursorPos(ctypes.byref(pt))
+                self._target = (pt.x - self._drag_off[0], pt.y - self._drag_off[1])
+
+        # Frame-rate independent exponential easing toward the target
+        k = 1.0 - math.exp(-DRAG_SMOOTHING * dt)
+        self._pos[0] += (self._target[0] - self._pos[0]) * k
+        self._pos[1] += (self._target[1] - self._pos[1]) * k
+
+        settled = (abs(self._target[0] - self._pos[0]) < 0.5 and
+                   abs(self._target[1] - self._pos[1]) < 0.5)
+        if self._released and settled:
+            self._pos = [self._target[0], self._target[1]]
+
+        nx, ny = int(round(self._pos[0])), int(round(self._pos[1]))
+        if (nx, ny) != self._last_pos:
+            # SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+            user32.SetWindowPos(self._drag_hwnd, None, nx, ny, 0, 0, 0x0001 | 0x0004 | 0x0010)
+            self._last_pos = (nx, ny)
+
+        if self._released and settled:
+            self._end_drag()
+            return
+
+        self.root.after(DRAG_INTERVAL_MS, self._drag_tick)
+
+    def _end_drag(self):
+        was_native = self._native_drag
+        self._dragging = False
+        self._native_drag = False
+        if was_native:
+            try:
+                ctypes.windll.winmm.timeEndPeriod(1)
+            except Exception:
+                pass
+
+    def bar_drag(self, event):
+        # Fallback path for non-Windows systems (the native path drives itself via _drag_tick)
+        if self._dragging and not self._native_drag:
+            self.root.geometry(f"+{event.x_root - self._drag_dx}+{event.y_root - self._drag_dy}")
+
+    def bar_release(self, event):
+        if self._native_drag:
+            # Let the window finish gliding to the cursor; _drag_tick ends the drag when settled
+            self._released = True
+        else:
+            self._end_drag()
+
+    def bar_hover(self, event):
+        lx, ly = event.x / self.sx, event.y / self.sy
+        over_close = ly < BAR_H and lx >= WIN_W - 36
+        over_min = ly < BAR_H and WIN_W - 72 <= lx < WIN_W - 36
+        over_button = any(isinstance(b, CanvasButton) and b.enabled and b.hit(event.x, event.y)
+                          for b in self.theme_widgets) or \
+            self.scale_reset_btn.hit(event.x, event.y)
+        over_header = (self._header_at(lx, ly) is not None or
+                       self._tab_at(lx, ly) is not None or over_button)
+        self.bg_canvas.itemconfigure(self.close_txt, fill="#ef4444" if over_close else TEXT_LIGHT)
+        self.bg_canvas.itemconfigure(self.min_txt, fill=ACCENT_BLUE if over_min else TEXT_LIGHT)
+
+        zone = self._resize_zone(event.x, event.y)
+        cursor = {"corner": "size_nw_se", "right": "sb_h_double_arrow",
+                  "bottom": "sb_v_double_arrow"}.get(zone)
+        if cursor is None:
+            cursor = "hand2" if over_header else ""
+        self.bg_canvas.config(cursor=cursor)
+
+    # ---------- Config ----------
+    def load_config(self):
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, "r") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def collect_settings(self):
+        """Every user setting as a plain dict (used for the config file and for Export Settings)."""
+        return {
+            "dir": self.dir_var.get(),
+            "max_shots": self.max_shots_var.get(),
+            "max_mb": self.max_mb_var.get(),
+            "delay": self.delay_var.get(),
+            "name": self.name_var.get(),
+            "toggle_key": self.toggle_key_var.get(),
+            "single_key": self.single_key_var.get(),
+            "quit_key": self.quit_key_var.get(),
+            "notifications": self.notify_var.get(),
+            "opacity": self.opacity_var.get(),
+            "bar_opacity": self.bar_opacity_var.get(),
+            "box_opacity": self.box_opacity_var.get(),
+            "line_opacity": self.line_opacity_var.get(),
+            "box_radius": self.box_radius_var.get(),
+            "anim_speed": self.anim_speed_var.get(),
+            "line_count": self.line_count_var.get(),
+            "spread": self.spread_var.get(),
+            "line_colour": self.line_colour_var.get(),
+            "border_colour": self.border_colour_var.get(),
+            "box_colour": self.box_colour_var.get(),
+            "image_opacity": self.image_opacity_var.get(),
+        }
+
+    def save_config(self):
+        try:
+            data = self.collect_settings()
+            data["window_sx"] = round(self.sx, 4)
+            data["window_sy"] = round(self.sy, 4)
+            with open(CONFIG_FILE, "w") as f:
+                json.dump(data, f, indent=4)
+        except Exception:
+            pass
+
+    def schedule_save(self):
+        # Wait until the slider stops moving, then save once
+        if self._save_job is not None:
+            self.root.after_cancel(self._save_job)
+        self._save_job = self.root.after(400, self.save_appearance)
+
+    def save_appearance(self):
+        self._save_job = None
+        config = self.load_config()
+        config.update({k: v for k, v in self.collect_settings().items() if k in APPEARANCE_KEYS})
+        config["window_sx"] = round(self.sx, 4)
+        config["window_sy"] = round(self.sy, 4)
+        try:
+            with open(CONFIG_FILE, "w") as f:
+                json.dump(config, f, indent=4)
+        except Exception:
+            pass
+
+    def reset_defaults(self):
+        if os.path.exists(CONFIG_FILE):
+            try:
+                os.remove(CONFIG_FILE)
+            except Exception:
+                pass
+
+        self.dir_var.set("")
+        self.notify_var.set(True)
+        self.opacity_var.set(0.95)
+        self.bar_opacity_var.set(0.85)
+        self.box_opacity_var.set(0.4)
+        self.line_opacity_var.set(0.8)
+        self.box_radius_var.set(12.0)
+        self.anim_speed_var.set(1.0)
+        self.line_count_var.set(60)
+        self.spread_var.set(0.5)
+        self.line_colour_var.set(DEFAULT_LINE_COLOUR)
+        self.border_colour_var.set(DEFAULT_BORDER_COLOUR)
+        self.box_colour_var.set(DEFAULT_BOX_COLOUR)
+        self.image_opacity_var.set(0.5)
+        self.clear_background_image()
+        self.root.attributes('-alpha', 0.95)
+        self.set_scale(1.0, 1.0)
+
+        defaults = [
+            (self.shots_entry, self.max_shots_var, "100"),
+            (self.mb_entry, self.max_mb_var, "100.0"),
+            (self.delay_entry, self.delay_var, "0.5"),
+            (self.name_entry, self.name_var, "screenshot"),
+            (self.toggle_entry, self.toggle_key_var, "q"),
+            (self.single_entry, self.single_key_var, "e"),
+            (self.quit_entry, self.quit_key_var, "'")
+        ]
+
+        for entry, var, val in defaults:
+            var.set(val)
+            entry.config(fg="#64748b")
+            entry.is_default = True
+
+        self.update_box_theme()
+        self.status_label.config(text="Status: Settings reset to defaults.", fg=TEXT_MUTED)
+
+    def change_window_opacity(self, val):
+        self.root.attributes('-alpha', float(val))
+
+    def update_box_theme(self, val=None):
+        # Background colour for any remaining solid widgets sitting on the panels
+        alpha = self.box_opacity_var.get()
+        r = int(18 + (32 * alpha))
+        g = int(18 + (32 * alpha))
+        b = int(31 + (55 * alpha))
+        current_box_bg = f"#{r:02x}{g:02x}{b:02x}"
+
+        for w in self.themed_widgets:
+            try:
+                w.config(bg=current_box_bg)
+            except Exception:
+                pass
+
+    def on_mouse_motion(self, event):
+        self.target_x = (event.x_root - self.root.winfo_rootx()) / self.sx
+        self.target_y = (event.y_root - self.root.winfo_rooty()) / self.sy
+
+    def _bar_signature(self):
+        return (round(self.bar_opacity_var.get(), 2),
+                self._rgb(self.border_colour_var, DEFAULT_BORDER_COLOUR),
+                round(self.sx, 3), round(self.sy, 3))
+
+    def get_bar_image(self, alpha):
+        border = self._rgb(self.border_colour_var, DEFAULT_BORDER_COLOUR)
+        key = (round(alpha, 2), border, round(self.sx, 3), round(self.sy, 3))
+        img = self.bar_cache.get(key)
+        if img is None:
+            if len(self.bar_cache) > 20:
+                self.bar_cache.clear()
+            wp = max(1, int(round(WIN_W * self.sx)))
+            hp = max(2, int(round(BAR_H * self.sy)))
+            im = Image.new("RGBA", (wp, hp), (0, 0, 0, int(255 * alpha)))
+            d = ImageDraw.Draw(im)
+            d.line([(0, hp - 1), (wp, hp - 1)], fill=border + (255,), width=1)
+            img = ImageTk.PhotoImage(im)
+            self.bar_cache[key] = img
+        return img
+
+    def _draw_bar(self):
+        c = self.bg_canvas
+        c.delete("bar_bg")
+        c.create_image(0, 0, image=self.get_bar_image(self.bar_opacity_var.get()),
+                       anchor="nw", tags="bar_bg")
+        c.tag_lower("bar_bg")
+        self._bar_sig = self._bar_signature()
+
+    def sync_particles(self, target):
+        """Grow or shrink the particle list to match the target count."""
+        while len(self.particles) < target:
+            self.particles.append({
+                'x': random.uniform(0, WIN_W),
+                'y': random.uniform(0, self.win_h),
+                'vx': random.uniform(-0.5, 0.5),
+                'vy': random.uniform(-0.5, 0.5)
+            })
+        if len(self.particles) > target:
+            del self.particles[target:]
+
+    def spread_particles(self, repel_radius, f=1.0):
+        """Gently push neighbouring dots apart so they distribute evenly instead of clumping."""
+        n = len(self.particles)
+        for i in range(n):
+            p1 = self.particles[i]
+            for j in range(i + 1, n):
+                p2 = self.particles[j]
+                dx = p1['x'] - p2['x']
+                dy = p1['y'] - p2['y']
+                d = math.hypot(dx, dy)
+                if 0 < d < repel_radius:
+                    push = (repel_radius - d) * 0.04 * f
+                    nx = dx / d
+                    ny = dy / d
+                    p1['x'] += nx * push
+                    p1['y'] += ny * push
+                    p2['x'] -= nx * push
+                    p2['y'] -= ny * push
+
+        for p in self.particles:
+            p['x'] = min(max(p['x'], 0), WIN_W)
+            p['y'] = min(max(p['y'], 0), self.win_h)
+
+    def animate_background(self):
+        t0 = time.perf_counter()
+        dt = min(t0 - self._bg_last, 0.1)
+        self._bg_last = t0
+
+        # Skip the heavy redraw while dragging / resizing / opening / closing boxes so those stay smooth
+        if (PAUSE_ANIM_WHILE_DRAGGING and (self._dragging or self._resizing)) or \
+           (PAUSE_BG_WHILE_SECTION_ANIM and self._anim_job is not None):
+            self.root.after(BG_FRAME_MS, self.animate_background)
+            return
+
+        # Movement was tuned for 25 ms frames; scale by real elapsed time so the speed stays the same at 6 ms
+        f = min(dt / 0.025, 3.0)
+
+        sx, sy, S = self.sx, self.sy, self.scale
+        speed_multiplier = self.anim_speed_var.get()
+        line_alpha = self.line_opacity_var.get()
+        max_lines = min(MAX_LINES_LIMIT, int(self.line_count_var.get()))
+        spread = self.spread_var.get()
+
+        # Spread controls dot repulsion and how far a line can reach
+        repel_radius = spread * 110
+        link_max = 100 + spread * 140
+
+        ease = 1.0 - (1.0 - min(0.1 * speed_multiplier, 0.99)) ** f
+        self.mouse_x += (self.target_x - self.mouse_x) * ease
+        self.mouse_y += (self.target_y - self.mouse_y) * ease
+
+        if hasattr(self, "bg_canvas"):
+            c = self.bg_canvas
+            c.delete("net")
+
+            # Line colour: the chosen colour blended with the background by the line opacity slider
+            base = self._rgb(self.line_colour_var, DEFAULT_LINE_COLOUR)
+            lr = int(18 + (base[0] - 18) * line_alpha)
+            lg = int(18 + (base[1] - 18) * line_alpha)
+            lb = int(31 + (base[2] - 31) * line_alpha)
+            line_color = f"#{lr:02x}{lg:02x}{lb:02x}"
+
+            # Enough dots so the requested number of lines can actually be reached
+            target_particles = int(5 * math.sqrt(max_lines)) if max_lines > 0 else 0
+            self.sync_particles(target_particles)
+
+            if max_lines > 0:
+                for p in self.particles:
+                    p['x'] += p['vx'] * speed_multiplier * f
+                    p['y'] += p['vy'] * speed_multiplier * f
+                    if p['x'] < 0 or p['x'] > WIN_W: p['vx'] *= -1
+                    if p['y'] < 0 or p['y'] > self.win_h: p['vy'] *= -1
+                    # Keep dots inside the window (it shrinks when boxes close)
+                    p['x'] = min(max(p['x'], 0), WIN_W)
+                    p['y'] = min(max(p['y'], 0), self.win_h)
+
+                if repel_radius > 0:
+                    self.spread_particles(repel_radius, f)
+
+                all_nodes = self.particles + [{'x': self.mouse_x, 'y': self.mouse_y}]
+
+                links = []
+                for i in range(len(all_nodes)):
+                    p1 = all_nodes[i]
+                    for j in range(i + 1, len(all_nodes)):
+                        p2 = all_nodes[j]
+                        dist = math.hypot(p1['x'] - p2['x'], p1['y'] - p2['y'])
+                        if dist < link_max:
+                            links.append((dist, p1, p2))
+
+                # Cap to the slider value, keeping the closest (strongest) links
+                if len(links) > max_lines:
+                    links.sort(key=lambda l: l[0])
+                    links = links[:max_lines]
+
+                for _, p1, p2 in links:
+                    mid_x = (p1['x'] + p2['x']) / 2 + (p2['y'] - p1['y']) * 0.05
+                    mid_y = (p1['y'] + p2['y']) / 2 + (p1['x'] - p2['x']) * 0.05
+                    c.create_line(
+                        p1['x'] * sx, p1['y'] * sy, mid_x * sx, mid_y * sy, p2['x'] * sx, p2['y'] * sy,
+                        smooth=True, fill=line_color, width=1.5 * S, tags="net"
+                    )
+
+            # The boxes and title bar are only redrawn when something about them changed
+            # (not every frame), which is what makes a 6 ms frame affordable.
+            restack = False
+            if self._bar_signature() != self._bar_sig:
+                self._draw_bar()
+                restack = True
+            if self._panels_dirty:
+                self.draw_panels(reorder=False)
+                self._panels_dirty = False
+                restack = True
+
+            # Stacking order: lines (bottom) < boxes < title bar < text/widgets
+            if restack:
+                c.tag_lower("bar_bg")
+                c.tag_lower("panel_bg")
+            c.tag_lower("net")
+            c.tag_lower("bg_img")
+
+        work_ms = (time.perf_counter() - t0) * 1000.0
+        self.root.after(max(1, int(BG_FRAME_MS - work_ms)), self.animate_background)
+
+    def build_ui(self):
+        # One canvas holds everything, so the lines can sit underneath the translucent boxes
+        self.bg_canvas = tk.Canvas(self.root, bg=BG_MAIN, highlightthickness=0)
+        self.bg_canvas.ui_scale = (1.0, 1.0)      # read by the drawn sliders / checkboxes (the UI is built at scale 1.0)
+        self.bg_canvas.place(x=0, y=0, relwidth=1, relheight=1)
+        c = self.bg_canvas
+
+        self.themed_widgets = []
+        X1, X2 = PANEL_X1, PANEL_X2
+
+        # --- Vertical stack of boxes (top positions are computed from heights and gaps) ---
+        specs = [
+            # key,      title,                          height, gap, panel, page
+            ("save",     "SAVE LOCATION (REQUIRED)",     72, 72, True,  "main"),
+            ("limits",   "LIMITS & TIMING (REQUIRED)",  156, 10, True,  "main"),
+            ("keys",     "CUSTOM KEYBINDS (REQUIRED)",  128, 10, True,  "main"),
+            ("prefs",    "PREFERENCES",                 430, 72, True,  "prefs"),
+            ("colours",  "COLOURS",                     128, 10, True,  "prefs"),
+            ("presets",  "PRESET THEMES",               182, 72, True,  "themes"),
+            ("custom",   "CUSTOM THEMES",               218, 10, True,  "themes"),
+            ("buttons",  "",                             36, 18, False, "both"),
+            ("status",   "LIVE STATUS",                 130, 12, True,  "both"),
+        ]
+        self.stack = []
+        y = 0
+        for key, title, full_h, gap, panel, page in specs:
+            y += gap
+            self.stack.append(Section(key, title, y, full_h, gap, panel, page))
+            y += full_h
+        S = {s.key: s for s in self.stack}
+
+        def tg(s, content=True):
+            """Tags for an item: moves with its box, and (for plain items) hides when it doesn't fit."""
+            return ("ui_text", s.tag, s.ctag) if content else ("ui_text", s.tag)
+
+        # --- Custom title bar (background image is drawn in animate_background) ---
+        c.create_text(14, BAR_H / 2, text="SCREENSHOTTER", font=("Segoe UI", 10, "bold"),
+                      fill=TEXT_LIGHT, anchor="w", tags="ui_text")
+        self.min_txt = c.create_text(WIN_W - 54, BAR_H / 2, text="—", font=("Segoe UI", 11),
+                                     fill=TEXT_LIGHT, tags="ui_text")
+        self.close_txt = c.create_text(WIN_W - 18, BAR_H / 2, text="✕", font=("Segoe UI", 11),
+                                       fill=TEXT_LIGHT, tags="ui_text")
+
+        # --- Page tabs at the very top: Main | Preferences | Themes ---
+        self.tab_defs = [("main", "Main", X1, X1 + 84),
+                         ("prefs", "Preferences", X1 + 90, X1 + 220),
+                         ("themes", "Themes", X1 + 226, X1 + 316)]
+        self.tab_texts = {}
+        for key, label, tx0, tx1 in self.tab_defs:
+            self.tab_texts[key] = c.create_text(
+                (tx0 + tx1) / 2, TAB_Y, text=label, font=("Segoe UI", 10, "bold"),
+                fill=TEXT_LIGHT, tags="ui_text")
+        c.create_line(X1, TAB_Y + 14, X2, TAB_Y + 14, fill="#2b2b45", width=1, tags="ui_text")
+        self.tab_indicator = c.create_line(0, 0, 0, 0, fill=ACCENT_BLUE, width=3,
+                                           capstyle="round", tags="ui_text")
+        self._update_tabs()
+
+        def make_header(s):
+            """Title text plus the arrow in the top-left corner of the box."""
+            c.create_text(X1 + 32, s.top + 16, text=s.title, font=("Segoe UI", 9, "bold"),
+                          fill=ACCENT_BLUE, anchor="w", tags=("ui_text", s.tag, s.htag))
+            s.chevron = c.create_line(
+                0, 0, 0, 0, 0, 0, fill=ACCENT_BLUE, width=2,
+                capstyle="round", joinstyle="round", tags=("ui_text", s.tag, s.htag))
+            self._update_chevron(s)
+
+        def add_row(s, ry, label_text, var, default_val):
+            c.create_text(X1 + 14, ry, text=label_text, font=("Segoe UI", 9),
+                          fill=TEXT_LIGHT, anchor="w", tags=tg(s))
+            entry = AutoClearEntry(c, textvariable=var, default_value=default_val,
+                                   width=14, bd=1, relief="solid")
+            c.create_window(X1 + 190, ry, window=entry, anchor="w", tags=tg(s))
+            c.create_text(X1 + 330, ry, text=f"Default: {default_val}", font=("Segoe UI", 8),
+                          fill=TEXT_MUTED, anchor="w", tags=tg(s))
+            return entry
+
+        # --- Save Directory ---
+        s = S["save"]
+        make_header(s)
+        self.browse_btn = tk.Button(
+            c, text="Browse...", command=self.browse_folder,
+            bg=ACCENT_PURPLE, fg=TEXT_LIGHT, activebackground=ACCENT_BLUE, activeforeground="white",
+            font=("Segoe UI", 9, "bold"), bd=0, padx=8, pady=2
+        )
+        c.create_window(X2 - 14, s.top + 46, window=self.browse_btn, anchor="e", tags=tg(s))
+
+        self.dir_entry = tk.Entry(
+            c, textvariable=self.dir_var,
+            bg="#161625", fg=TEXT_LIGHT, insertbackground="white", bd=1, relief="solid"
+        )
+        c.create_window(X1 + 14, s.top + 46, window=self.dir_entry, anchor="w", width=340, tags=tg(s))
+
+        # --- Limits & Timing ---
+        s = S["limits"]
+        make_header(s)
+        self.shots_entry = add_row(s, s.top + 44, "Max Screenshots:", self.max_shots_var, "100")
+        self.mb_entry = add_row(s, s.top + 72, "Max Storage (MB):", self.max_mb_var, "100.0")
+        self.delay_entry = add_row(s, s.top + 100, "Delay (Seconds):", self.delay_var, "0.5")
+        self.name_entry = add_row(s, s.top + 128, "Screenshot Name:", self.name_var, "screenshot")
+
+        # --- Keybinds ---
+        s = S["keys"]
+        make_header(s)
+        self.toggle_entry = add_row(s, s.top + 44, "Start / Pause Continuous:", self.toggle_key_var, "q")
+        self.single_entry = add_row(s, s.top + 72, "Take 1 Screenshot:", self.single_key_var, "e")
+        self.quit_entry = add_row(s, s.top + 100, "Quit Application:", self.quit_key_var, "'")
+
+        # --- Preferences ---
+        s = S["prefs"]
+        make_header(s)
+
+        # Canvas-drawn checkbox: no solid widget patch, so lines show through
+        self.notify_check = CanvasCheckbox(
+            c, X1 + 14, s.top + 40, "Send desktop notifications", self.notify_var,
+            TEXT_LIGHT, ("Segoe UI", 9), tags=tg(s, content=False)
+        )
+        s.widgets.append(self.notify_check)
+
+        def add_slider(cy, label, from_, to, res, var, command=None):
+            label_id = c.create_text(X1 + 14, cy, text=label, font=("Segoe UI", 9),
+                                     fill=TEXT_LIGHT, anchor="w", tags=tg(s, content=False))
+            # Canvas-drawn slider: only a thin track and small handle, so lines show through
+            slider = CanvasSlider(c, X2 - 14 - 200, X2 - 14, cy, from_, to, res, var, command,
+                                  tags=tg(s, content=False))
+            slider.extra_items = [label_id]
+            s.widgets.append(slider)
+            return slider
+
+        sy = s.top + 82
+        self.win_opacity_slider = add_slider(sy, "Window Opacity:", 0.4, 1.0, 0.05,
+                                             self.opacity_var, self.change_window_opacity)
+        self.bar_opacity_slider = add_slider(sy + 46, "Title Bar Opacity:", 0.0, 1.0, 0.05,
+                                             self.bar_opacity_var)
+        self.box_opacity_slider = add_slider(sy + 92, "Box Opacity:", 0.0, 1.0, 0.05,
+                                             self.box_opacity_var, self.update_box_theme)
+        self.line_opacity_slider = add_slider(sy + 138, "Line Opacity:", 0.1, 1.0, 0.05,
+                                              self.line_opacity_var)
+        self.box_radius_slider = add_slider(sy + 184, "Box Corner Radius:", 0, 25, 1,
+                                            self.box_radius_var)
+        self.speed_slider = add_slider(sy + 230, "Animation Speed:", 0.2, 2.5, 0.1,
+                                       self.anim_speed_var)
+        self.line_count_slider = add_slider(sy + 276, "Line Count (max):", 0, MAX_LINES_LIMIT, 10,
+                                            self.line_count_var)
+        self.spread_slider = add_slider(sy + 322, "Line Spread:", 0.0, 1.0, 0.05,
+                                        self.spread_var)
+
+        # --- Colours ---
+        s = S["colours"]
+        make_header(s)
+
+        def add_colour_row(ry, label_text, var, default_val):
+            c.create_text(X1 + 14, ry, text=label_text, font=("Segoe UI", 9),
+                          fill=TEXT_LIGHT, anchor="w", tags=tg(s))
+            swatch = tk.Button(
+                c, bg=parse_hex(var.get()) or default_val, bd=1, relief="solid", width=3,
+                command=lambda: self.pick_colour(var, label_text.rstrip(":"), default_val))
+            c.create_window(X1 + 190, ry, window=swatch, anchor="w", height=22, tags=tg(s))
+            entry = tk.Entry(c, textvariable=var, width=10, bg="#161625", fg=TEXT_LIGHT,
+                             insertbackground="white", bd=1, relief="solid")
+            c.create_window(X1 + 236, ry, window=entry, anchor="w", tags=tg(s))
+            c.create_text(X1 + 340, ry, text=f"Default: {default_val}", font=("Segoe UI", 8),
+                          fill=TEXT_MUTED, anchor="w", tags=tg(s))
+            var.trace_add("write", lambda *a: self._refresh_swatch(var, swatch, entry))
+            self._refresh_swatch(var, swatch, entry)
+            self.colour_widgets += [swatch, entry]
+
+        add_colour_row(s.top + 44, "Line Colour:", self.line_colour_var, DEFAULT_LINE_COLOUR)
+        add_colour_row(s.top + 72, "Border Colour:", self.border_colour_var, DEFAULT_BORDER_COLOUR)
+        add_colour_row(s.top + 100, "Box Colour:", self.box_colour_var, DEFAULT_BOX_COLOUR)
+
+        # --- Preset Themes (canvas-drawn rounded buttons: they glide at full speed when the box opens/closes) ---
+        s = S["presets"]
+        make_header(s)
+        for i, (name, theme) in enumerate(PRESET_THEMES):
+            col, row = i % 2, i // 2
+            bx = X1 + 14 + col * 238
+            byc = s.top + 52 + row * 34
+            btn = CanvasButton(
+                c, bx, byc - 14, bx + 222, byc + 14, name,
+                lambda n=name, t=theme: self.apply_preset(n, t),
+                fill=theme["box"], fg=theme["line"], border=theme["border"],
+                font=("Segoe UI", 9, "bold"), radius=PRESET_BTN_RADIUS, tags=tg(s))
+            self.theme_widgets.append(btn)
+
+        # --- Custom Themes ---
+        s = S["custom"]
+        make_header(s)
+
+        def add_theme_button(x, y, text, command, w=222):
+            return CanvasButton(
+                c, x, y - 14, x + w, y + 14, text, command,
+                fill=ACCENT_PURPLE, fg=TEXT_LIGHT, border=ACCENT_PURPLE,
+                font=("Segoe UI", 9, "bold"), radius=PRESET_BTN_RADIUS, tags=tg(s))
+
+        self.theme_widgets.append(add_theme_button(X1 + 14, s.top + 52, "Upload Background Image...", self.upload_background))
+        self.theme_widgets.append(add_theme_button(X1 + 252, s.top + 52, "Remove Image", self.remove_background))
+        self.image_opacity_slider = add_slider(s.top + 104, "Image Opacity:", 0.1, 1.0, 0.05,
+                                               self.image_opacity_var)
+        self.theme_widgets.append(add_theme_button(X1 + 14, s.top + 146, "Export Settings...", self.export_settings))
+        self.theme_widgets.append(add_theme_button(X1 + 252, s.top + 146, "Import Settings...", self.import_settings))
+        # Not in theme_widgets: it stays usable while hotkeys are armed (resizing is allowed then too)
+        self.scale_reset_btn = add_theme_button(X1 + 14, s.top + 188, "Reset Window Size",
+                                                lambda: self.set_scale(1.0, 1.0), w=460)
+
+        # --- Action Buttons (a fixed row: slides with the boxes above, never collapses) ---
+        s = S["buttons"]
+        by = s.top + 18
+        self.arm_btn = tk.Button(
+            c, text="ARM HOTKEYS & CREATE FOLDER",
+            bg=BTN_GREEN, fg="white", activebackground="#15803d", activeforeground="white",
+            font=("Segoe UI", 10, "bold"), bd=0, command=self.arm_session
+        )
+        c.create_window(X1, by, window=self.arm_btn, anchor="w", width=340, height=36, tags=(s.tag,))
+
+        self.reset_btn = tk.Button(
+            c, text="RESET DEFAULTS",
+            bg=BTN_RED, fg="white", activebackground="#b91c1c", activeforeground="white",
+            font=("Segoe UI", 9, "bold"), bd=0, command=self.reset_defaults
+        )
+        c.create_window(X2, by, window=self.reset_btn, anchor="e", width=140, height=36, tags=(s.tag,))
+
+        # --- Status ---
+        s = S["status"]
+        make_header(s)
+        self.status_label = CanvasLabel(
+            c, X1 + 14, s.top + 42, "Status: Idle (Configure settings and click Arm)",
+            TEXT_MUTED, ("Segoe UI", 9), wrap=450, tags=tg(s))
+        self.folder_label = CanvasLabel(
+            c, X1 + 14, s.top + 72, "Session Folder: None",
+            TEXT_MUTED, ("Segoe UI", 9), wrap=450, tags=tg(s))
+        self.stats_label = CanvasLabel(
+            c, X1 + 14, s.top + 100, "Captured: 0 files | 0.00 MB",
+            TEXT_MUTED, ("Segoe UI", 9), wrap=450, tags=tg(s))
+
+        self.config_entries = [
+            self.dir_entry, self.browse_btn, self.shots_entry, self.mb_entry,
+            self.delay_entry, self.name_entry, self.toggle_entry, self.single_entry,
+            self.quit_entry, self.notify_check, self.win_opacity_slider, self.bar_opacity_slider,
+            self.box_opacity_slider, self.line_opacity_slider, self.box_radius_slider,
+            self.speed_slider, self.line_count_slider, self.spread_slider,
+            *self.colour_widgets, *self.theme_widgets, self.image_opacity_slider, self.reset_btn
+        ]
+
+        self._index_sections()
+        self._index_scalables()
+
+    # ---------- Themes, background image, import / export ----------
+    def apply_preset(self, name, theme):
+        self.line_colour_var.set(theme["line"])
+        self.border_colour_var.set(theme["border"])
+        self.box_colour_var.set(theme["box"])
+        self.status_label.config(text=f"Status: Theme '{name}' applied.", fg=TEXT_MUTED)
+
+    def _load_bg_source(self):
+        self.bg_src = None
+        self._bg_cache = None
+        if os.path.exists(BG_IMAGE_FILE):
+            try:
+                img = Image.open(BG_IMAGE_FILE)
+                img.load()
+                self.bg_src = cover_resize(img, WIN_W * BG_SRC_SCALE, BG_IMG_H * BG_SRC_SCALE)
+            except Exception:
+                self.bg_src = None
+
+    def render_background(self, fast=False):
+        """Draw the background image (dimmed toward the window colour by Image Opacity) under everything.
+        It is cover-fitted to the current window shape, so it is never stretched."""
+        c = self.bg_canvas
+        c.delete("bg_img")
+        self._bg_photo = None
+        if self.bg_src is None:
+            return
+        try:
+            a = min(max(float(self.image_opacity_var.get()), 0.0), 1.0)
+        except Exception:
+            return
+        size = (max(1, int(round(WIN_W * self.sx))), max(1, int(round(BG_IMG_H * self.sy))))
+        scaled = cover_resize(self.bg_src, size[0], size[1], Image.NEAREST if fast else Image.BILINEAR)
+        base = Image.new("RGB", size, (18, 18, 31))
+        self._bg_photo = ImageTk.PhotoImage(Image.blend(base, scaled, a))
+        c.create_image(0, 0, image=self._bg_photo, anchor="nw", tags="bg_img")
+        c.tag_lower("bg_img")
+
+    def set_background_image(self, img):
+        self.bg_src = cover_resize(img, WIN_W * BG_SRC_SCALE, BG_IMG_H * BG_SRC_SCALE)
+        self._bg_cache = None
+        try:
+            self.bg_src.save(BG_IMAGE_FILE, "JPEG", quality=90)
+        except Exception:
+            pass
+        self.render_background()
+
+    def clear_background_image(self):
+        self.bg_src = None
+        self._bg_cache = None
+        if os.path.exists(BG_IMAGE_FILE):
+            try:
+                os.remove(BG_IMAGE_FILE)
+            except Exception:
+                pass
+        self.render_background()
+
+    def upload_background(self):
+        path = filedialog.askopenfilename(
+            title="Choose a background image",
+            filetypes=[("Images", "*.png *.jpg *.jpeg *.bmp *.gif *.webp"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            img = Image.open(path)
+            img.load()
+            self.set_background_image(img)
+            self.status_label.config(text=f"Status: Background set to {os.path.basename(path)}.", fg=TEXT_MUTED)
+        except Exception as e:
+            messagebox.showerror("Image Error", f"Could not open that image:\n{e}")
+
+    def remove_background(self):
+        self.clear_background_image()
+        self.status_label.config(text="Status: Background image removed.", fg=TEXT_MUTED)
+
+    def export_settings(self):
+        path = filedialog.asksaveasfilename(
+            title="Export Settings", defaultextension=".json", initialfile="screenshotter_theme.json",
+            filetypes=[("Screenshotter settings", "*.json"), ("All files", "*.*")])
+        if not path:
+            return
+        data = {"screenshotter_settings": 1, "settings": self.collect_settings(), "background_image": None}
+        if os.path.exists(BG_IMAGE_FILE):
+            try:
+                with open(BG_IMAGE_FILE, "rb") as f:
+                    data["background_image"] = base64.b64encode(f.read()).decode("ascii")
+            except Exception:
+                pass
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4)
+            self.status_label.config(text=f"Status: Settings exported to {os.path.basename(path)}.", fg=TEXT_MUTED)
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Could not write the file:\n{e}")
+
+    def import_settings(self):
+        path = filedialog.askopenfilename(
+            title="Import Settings",
+            filetypes=[("Screenshotter settings", "*.json"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            settings = data.get("settings", data) if isinstance(data, dict) else None
+            if not isinstance(settings, dict):
+                raise ValueError("This doesn't look like a Screenshotter settings file.")
+        except Exception as e:
+            messagebox.showerror("Import Error", f"Could not read that file:\n{e}")
+            return
+
+        self.apply_settings(settings)
+
+        if isinstance(data, dict) and "background_image" in data:
+            blob = data["background_image"]
+            if blob:
+                try:
+                    self.set_background_image(Image.open(io.BytesIO(base64.b64decode(blob))))
+                except Exception:
+                    messagebox.showwarning("Import", "The settings loaded, but the embedded image could not be read.")
+            else:
+                self.clear_background_image()
+
+        self.save_config()
+        self.status_label.config(text=f"Status: Settings imported from {os.path.basename(path)}.", fg=TEXT_MUTED)
+
+    def _set_field(self, entry, var, default, value):
+        value = str(value).strip()
+        if value:
+            var.set(value)
+            entry.config(fg=TEXT_LIGHT)
+            entry.is_default = False
+        else:
+            var.set(default)
+            entry.config(fg="#64748b")
+            entry.is_default = True
+
+    def apply_settings(self, cfg):
+        """Load a settings dict (from an exported file) into the UI. Unknown / bad values are skipped."""
+        ranges = {
+            "opacity": (self.opacity_var, 0.4, 1.0), "bar_opacity": (self.bar_opacity_var, 0.0, 1.0),
+            "box_opacity": (self.box_opacity_var, 0.0, 1.0), "line_opacity": (self.line_opacity_var, 0.1, 1.0),
+            "box_radius": (self.box_radius_var, 0, 25), "anim_speed": (self.anim_speed_var, 0.2, 2.5),
+            "line_count": (self.line_count_var, 0, MAX_LINES_LIMIT), "spread": (self.spread_var, 0.0, 1.0),
+            "image_opacity": (self.image_opacity_var, 0.1, 1.0),
+        }
+        for key, (var, lo, hi) in ranges.items():
+            if key in cfg:
+                try:
+                    var.set(min(max(float(cfg[key]), lo), hi))
+                except (TypeError, ValueError):
+                    pass
+        if "notifications" in cfg:
+            self.notify_var.set(bool(cfg["notifications"]))
+        for key, var in (("line_colour", self.line_colour_var), ("border_colour", self.border_colour_var),
+                         ("box_colour", self.box_colour_var)):
+            ok = parse_hex(cfg.get(key, ""))
+            if ok:
+                var.set(ok)
+        if "dir" in cfg:
+            self.dir_var.set(str(cfg["dir"]))
+        for key, entry, var, default in (
+                ("max_shots", self.shots_entry, self.max_shots_var, "100"),
+                ("max_mb", self.mb_entry, self.max_mb_var, "100.0"),
+                ("delay", self.delay_entry, self.delay_var, "0.5"),
+                ("name", self.name_entry, self.name_var, "screenshot"),
+                ("toggle_key", self.toggle_entry, self.toggle_key_var, "q"),
+                ("single_key", self.single_entry, self.single_key_var, "e"),
+                ("quit_key", self.quit_entry, self.quit_key_var, "'")):
+            if key in cfg:
+                self._set_field(entry, var, default, cfg[key])
+        self.root.attributes('-alpha', self.opacity_var.get())
+        self.update_box_theme()
+
+    def browse_folder(self):
+        selected = filedialog.askdirectory(title="Select Base Save Folder")
+        if selected:
+            self.dir_var.set(os.path.normpath(selected))
+
+    def send_notification(self, title, message):
+        if not self.send_notifications:
+            return
+        try:
+            notification.notify(title=title, message=message, app_name="Screenshotter", timeout=2)
+        except Exception:
+            pass
+
+    def arm_session(self):
+        if self.is_armed:
+            self.disarm_session()
+            return
+
+        raw_fields = {
+            "Save Location": self.dir_var.get().strip(),
+            "Max Screenshots": self.max_shots_var.get().strip(),
+            "Max Storage (MB)": self.max_mb_var.get().strip(),
+            "Delay (Seconds)": self.delay_var.get().strip(),
+            "Screenshot Name": self.name_var.get().strip(),
+            "Start / Pause Keybind": self.toggle_key_var.get().strip(),
+            "Take 1 Screenshot Keybind": self.single_key_var.get().strip(),
+            "Quit Application Keybind": self.quit_key_var.get().strip(),
+        }
+
+        missing = [name for name, val in raw_fields.items() if not val]
+        if missing:
+            messagebox.showerror(
+                "Missing Required Fields",
+                "Cannot start. Please fill in all required fields:\n\n• " + "\n• ".join(missing)
+            )
+            return
+
+        base_dir = raw_fields["Save Location"].strip('"').strip("'")
+        if not os.path.isdir(base_dir):
+            messagebox.showerror("Invalid Folder", f"'{base_dir}' does not exist or is not a valid folder.")
+            return
+
+        try:
+            self.max_screenshots = int(raw_fields["Max Screenshots"])
+            if self.max_screenshots <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Invalid Input", "Max Screenshots must be a whole number greater than 0.")
+            return
+
+        try:
+            self.max_folder_size_mb = float(raw_fields["Max Storage (MB)"])
+            if self.max_folder_size_mb <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Invalid Input", "Max Storage (MB) must be a number greater than 0.")
+            return
+
+        try:
+            self.interval = float(raw_fields["Delay (Seconds)"])
+            if self.interval <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Invalid Input", "Delay (Seconds) must be a number greater than 0.")
+            return
+
+        # Strip characters Windows doesn't allow in filenames
+        clean_name = re.sub(r'[<>:"/\\|?*]', "", raw_fields["Screenshot Name"]).strip(" .")
+        if not clean_name:
+            messagebox.showerror("Invalid Input", "Screenshot Name contains no usable characters.")
+            return
+        self.file_prefix = clean_name
+
+        t_key = raw_fields["Start / Pause Keybind"].lower()
+        s_key = raw_fields["Take 1 Screenshot Keybind"].lower()
+        q_key = raw_fields["Quit Application Keybind"].lower()
+
+        if len({t_key, s_key, q_key}) < 3:
+            messagebox.showerror("Duplicate Keybinds", "Each action must have a unique keybind.")
+            return
+
+        for label, key in [("Start / Pause", t_key), ("Take 1 Screenshot", s_key), ("Quit Application", q_key)]:
+            try:
+                keyboard.parse_hotkey(key)
+            except ValueError:
+                messagebox.showerror("Invalid Keybind", f"'{key}' is not a valid key for {label}.")
+                return
+
+        self.toggle_hotkey = t_key
+        self.single_hotkey = s_key
+        self.quit_hotkey = q_key
+        self.send_notifications = self.notify_var.get()
+
+        self.save_config()
+
+        folder_num = 1
+        while True:
+            candidate = os.path.join(base_dir, f"PythonScreenshots{folder_num}")
+            if not os.path.exists(candidate):
+                try:
+                    os.makedirs(candidate)
+                    self.save_folder = candidate
+                    break
+                except OSError as e:
+                    messagebox.showerror("Folder Error", f"Cannot create folder in '{base_dir}':\n{e}")
+                    return
+            folder_num += 1
+
+        for widget in self.config_entries:
+            widget.config(state="disabled")
+
+        self.is_armed = True
+        self.is_running = False
+        self.stop_thread = False
+        self.count = 1
+
+        try:
+            keyboard.add_hotkey(self.toggle_hotkey, self.toggle_capture)
+            keyboard.add_hotkey(self.single_hotkey, self.single_shot)
+            keyboard.add_hotkey(self.quit_hotkey, self.quit_from_hotkey)
+        except Exception as e:
+            messagebox.showerror(
+                "Hotkey Permission Error",
+                f"Failed to register global hotkeys.\n\nNote: On Windows, the 'keyboard' library requires running your terminal or VS Code as Administrator.\n\nDetails: {e}"
+            )
+            self.disarm_session("Idle")
+            return
+
+        self.arm_btn.config(text="STOP & UNLOCK SETTINGS", bg=BTN_RED)
+        self.status_label.config(text=f"Status: Armed & Paused (Press '{self.toggle_hotkey}' to start)", fg="#60a5fa")
+        self.folder_label.config(text=f"Session Folder: {os.path.basename(self.save_folder)}")
+        self.stats_label.config(text=f"Captured: 0 / {self.max_screenshots} files | 0.00 / {self.max_folder_size_mb} MB")
+
+        self.worker_thread = threading.Thread(target=self.capture_loop, daemon=True)
+        self.worker_thread.start()
+
+    def disarm_session(self, reason="Idle"):
+        self.is_armed = False
+        self.is_running = False
+        self.stop_thread = True
+        try:
+            keyboard.unhook_all()
+        except Exception:
+            pass
+
+        for widget in self.config_entries:
+            widget.config(state="normal")
+
+        self.arm_btn.config(text="ARM HOTKEYS & CREATE FOLDER", bg=BTN_GREEN)
+        self.status_label.config(text=f"Status: {reason}", fg=TEXT_MUTED)
+
+    def toggle_capture(self):
+        if not self.is_armed:
+            return
+        self.is_running = not self.is_running
+        if self.is_running:
+            self.root.after(0, lambda: self.status_label.config(text="Status: ▶ RECORDING", fg="#4ade80"))
+            self.send_notification("Screenshotter", "Continuous capture started.")
+        else:
+            self.root.after(0, lambda: self.status_label.config(text="Status: ⏸ PAUSED", fg="#fbbf24"))
+            self.send_notification("Screenshotter", "Continuous capture paused.")
+
+    def single_shot(self):
+        if self.is_armed:
+            threading.Thread(target=self.take_screenshot, args=(True,), daemon=True).start()
+
+    def take_screenshot(self, manual=False):
+        if not self.is_armed:
+            return False
+
+        current_bytes = 0
+        file_count = 0
+        for root_dir, _, files in os.walk(self.save_folder):
+            for f in files:
+                current_bytes += os.path.getsize(os.path.join(root_dir, f))
+                file_count += 1
+
+        current_mb = current_bytes / (1024 * 1024)
+
+        if file_count >= self.max_screenshots:
+            msg = f"Stopped: Reached max limit ({self.max_screenshots} screenshots)."
+            self.send_notification("Screenshotter", msg)
+            self.root.after(0, lambda: self.disarm_session(msg))
+            return False
+
+        if current_mb >= self.max_folder_size_mb:
+            msg = f"Stopped: Reached storage limit ({self.max_folder_size_mb} MB)."
+            self.send_notification("Screenshotter", msg)
+            self.root.after(0, lambda: self.disarm_session(msg))
+            return False
+
+        screenshot = pyautogui.screenshot()
+        filename = os.path.join(self.save_folder, f"{self.file_prefix}_{self.count:03d}.png")
+        screenshot.save(filename)
+
+        new_size_mb = (current_bytes + os.path.getsize(filename)) / (1024 * 1024)
+        new_count = file_count + 1
+
+        if manual:
+            self.send_notification("Screenshotter", f"Captured {os.path.basename(filename)}")
+
+        self.count += 1
+        self.root.after(0, lambda: self.stats_label.config(
+            text=f"Captured: {new_count} / {self.max_screenshots} files | {new_size_mb:.2f} / {self.max_folder_size_mb} MB"
+        ))
+        return True
+
+    def capture_loop(self):
+        while not self.stop_thread:
+            if self.is_running:
+                if not self.take_screenshot(manual=False):
+                    break
+                elapsed = 0.0
+                while elapsed < self.interval and self.is_running and not self.stop_thread:
+                    time.sleep(0.05)
+                    elapsed += 0.05
+            else:
+                time.sleep(0.05)
+
+    def quit_from_hotkey(self):
+        self.send_notification("Screenshotter", "Program closed by user.")
+        self.root.after(0, self.on_close)
+
+    def on_close(self):
+        if self._save_job is not None:
+            self.root.after_cancel(self._save_job)
+        if self._anim_job is not None:
+            self.root.after_cancel(self._anim_job)
+            self._anim_job = None
+        while self._timer_refs > 0:
+            self._set_timer_resolution(False)
+        self.save_appearance()
+        self._end_drag()
+        self.stop_thread = True
+        self.is_running = False
+        try:
+            keyboard.unhook_all()
+        except Exception:
+            pass
+        self.root.destroy()
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = ScreenshotterApp(root)
+    root.mainloop()
