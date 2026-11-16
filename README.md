@@ -19,4 +19,6 @@ It has 2 false positives, you can check the source code by looking at "screensho
 <img width="1309" height="916" alt="image" src="https://github.com/user-attachments/assets/6d11d91f-da45-4c17-a80d-6956b7fc4e76" />
 <img width="1392" height="730" alt="image" src="https://github.com/user-attachments/assets/81c8e51d-383f-4d7a-8c39-71e00e469b4b" />
 
-!https://count.getloli.com/@Visits?theme=moebooru&padding=7&offset=0&align=top&scale=1.1&pixelated=1&darkmode=auto
+<p align="center">
+  <img src="https://count.getloli.com/@Visits?theme=moebooru&padding=7&offset=0&align=top&scale=1.1&pixelated=1&darkmode=auto" alt="Visitor Counter" />
+</p>
