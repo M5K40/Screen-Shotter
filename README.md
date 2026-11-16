@@ -37,6 +37,6 @@ Added screenshotterWGUI.py source file, you can look though this to verify it is
 <img width="1768" height="792" alt="image" src="https://github.com/user-attachments/assets/f60b759b-c163-4184-b117-90554eb3eeeb" />
 <img width="1769" height="751" alt="image" src="https://github.com/user-attachments/assets/d6e4b24b-8efa-4b90-90f1-2795730f87d7" />
 
-<p align="center"> **Total Visits!** <p align="center"> 
+<p align="center"> Total Visits! <p align="center"> 
   <img src="https://count.getloli.com/@Visits?theme=moebooru&padding=7&offset=0&align=top&scale=1.1&pixelated=1&darkmode=auto" alt="Visitor Counter" />
 </p>
