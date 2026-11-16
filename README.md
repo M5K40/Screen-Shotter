@@ -8,7 +8,7 @@ Open the exe, it will give you a console to change the required fields, most of 
 Navigate to screenshotter.exe and download it.
 Open the exe, and a GUI will open will in the fields and start using with your own custom key binds and themes.
 
-## Keybinds
+## Keybinds (Can be changed)
 Q To start and stop
 Ctrl + C to quit the process
 
