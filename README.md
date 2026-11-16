@@ -13,7 +13,7 @@ Ctrl + C to quit the process
 Custom Limit for screenshot Quantity
 Custom Limit for screenshot MegaBytes
 
-## Virus Total Report [![VirusTotal Scan Status](https://img.shields.io/badge/VirusTotal-Scan%20Results-blue)](https://www.virustotal.com/gui/file/c54e8c3df89469e77d1bd98a41095cc677467e96f9faa77841720615c4fda8fb)
+## Virus Total Report No GUI Only Console [![VirusTotal Scan Status](https://img.shields.io/badge/VirusTotal-Scan%20Results-blue)](https://www.virustotal.com/gui/file/fd082d4d8fac4ee20fe3036a62c0bd6fac6ee80c95e747e3f1b7920054065b02)
 It has 2 false positives, you can check the source code by looking at "screenshotter.exe" or scanning it through windows security or defender
 
 <img width="1309" height="916" alt="image" src="https://github.com/user-attachments/assets/6d11d91f-da45-4c17-a80d-6956b7fc4e76" />
