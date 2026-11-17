@@ -1,8 +1,8 @@
-Update v1.2.1 17/11/26
+## Update v1.2.1 17/11/26
 Added a adjust image button that allows you to change the size and move around the image that you have uploaded.
 Matched the adjust image window with the main theme and preferences.
 
-Update v1.1.0 16/11/26
+## Update v1.1.0 16/11/26
 Fixed Console version of exe and updated source code for screenshotter.py
 Added screenshotterWGUI.exe, new gui based version of the original screenshotter, more user friendly with themes and more customisation.
 Added screenshotterWGUI.py source file, you can look though this to verify it is safe due to the virus total report giving 4 false positives probably based on what it is importing and looking at keyboard for key binds.
