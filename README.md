@@ -1,4 +1,4 @@
-# Screen-Shotter BETA
+# Screen-Shotter 
 Software that automatically takes screenshots of you desktop. Current .exe file with no console currently works, same for screenshotterWGUI.
 
 ## How To Download
