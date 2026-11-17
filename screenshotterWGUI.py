@@ -20,36 +20,32 @@ from PIL import Image, ImageDraw, ImageTk
 CONFIG_FILE = "screenshot_config.json"
 
 WIN_W = 520
-WIN_H = 674           # initial height (the layout resizes the window to fit the current page)
+WIN_H = 674
 BAR_H = 32
 
 MAX_LINES_LIMIT = 300
 
-# Window scaling (drag the right edge, bottom edge or bottom-right corner)
-MIN_SCALE = 0.7                   # smallest width / height scale (1.0 = original size)
-MAX_SCALE = 3.0                   # largest (also limited so the window fits on the screen)
-RESIZE_EDGE = 8                   # grab zone (pixels) along the right / bottom edge
-RESIZE_CORNER = 18                # grab zone (pixels) in the bottom-right corner
-CTRL_RESIZE_STEP = 0.0            # Ctrl+drag: 0 = smooth proportional scaling, e.g. 0.05 = snap to 5% steps
-RESIZE_INTERVAL_MS = 6            # resize redraw pacing: 6 ms between frames (~144 fps target)
-BG_SRC_SCALE = 2                  # background image is stored at this multiple so it stays sharp when scaled up
+MIN_SCALE = 0.7
+MAX_SCALE = 3.0
+RESIZE_EDGE = 8
+RESIZE_CORNER = 18
+CTRL_RESIZE_STEP = 0.0
+RESIZE_INTERVAL_MS = 6
+BG_SRC_SCALE = 2
 
-# Window drag settings
-DRAG_INTERVAL_MS = 6              # ~144+ updates per second
-DRAG_SMOOTHING = 14.0             # higher = tighter follow, lower = more trailing/glide (try 8 to 25)
-PAUSE_ANIM_WHILE_DRAGGING = True  # freeze background lines while dragging for max smoothness
+DRAG_INTERVAL_MS = 6
+DRAG_SMOOTHING = 14.0
+PAUSE_ANIM_WHILE_DRAGGING = True
 
-# Collapsible boxes
 PANEL_X1 = 16
 PANEL_X2 = 504
-SECTION_HEADER_H = 36             # height of a box when closed (header only)
-SECTION_ANIM_MS = 700             # open/close duration - higher = slower
-SECTION_ANIM_INTERVAL_MS = 6      # 6 ms between frames (~144+ fps target) - used by EVERY box, incl. the Themes page
-PAUSE_BG_WHILE_SECTION_ANIM = True  # freeze background lines during open/close for max smoothness
-WIN_BOTTOM_PAD = 30               # empty space under the last box
-TILE_H = 32                       # height of the reusable middle tile of a box background
+SECTION_HEADER_H = 36
+SECTION_ANIM_MS = 700
+SECTION_ANIM_INTERVAL_MS = 6
+PAUSE_BG_WHILE_SECTION_ANIM = True
+WIN_BOTTOM_PAD = 30
+TILE_H = 32
 
-# Theme Colors (Dark Gaming Aesthetic)
 BG_MAIN = "#12121f"
 ACCENT_PURPLE = "#5c52a2"
 ACCENT_BLUE = "#3b82f6"
@@ -58,39 +54,47 @@ TEXT_MUTED = "#94a3b8"
 BTN_GREEN = "#166534"
 BTN_RED = "#991b1b"
 
-# Customisable colours (defaults)
 DEFAULT_LINE_COLOUR = "#3b82f6"
 DEFAULT_BORDER_COLOUR = "#3b82f6"
 DEFAULT_BOX_COLOUR = "#323256"
+DEFAULT_ACCENT_COLOUR = "#3b82f6"
 
-PAGES = ("main", "prefs", "themes")   # page order (tabs, sliding direction)
-BG_IMAGE_FILE = "screenshot_background.jpg"   # working copy of the uploaded background image
-BG_IMG_H = 1000                   # the background image is prepared at WIN_W x BG_IMG_H (covers any window height)
+PAGES = ("main", "prefs", "themes")
+BG_IMAGE_FILE = "screenshot_background.jpg"
+BG_IMG_H = 1000
+BG_MAX_SIDE = 2600   # longest side of the stored background image
+BG_MAX_ZOOM = 5.0
+BG_MIN_ZOOM = 0.1    # below 1.0 the image is smaller than the window (gaps show)
 APPEARANCE_KEYS = ("notifications", "opacity", "bar_opacity", "box_opacity", "line_opacity",
                    "box_radius", "anim_speed", "line_count", "spread",
-                   "line_colour", "border_colour", "box_colour", "image_opacity", "window_scale")
+                   "line_colour", "border_colour", "box_colour", "image_opacity", "window_scale",
+                   "accent_colour", "bg_zoom", "bg_ox", "bg_oy")
 
-PRESET_BTN_RADIUS = 7             # corner radius (out of 25, same scale as the Box Corner Radius slider)
+PRESET_BTN_RADIUS = 7
 
 PRESET_THEMES = [
-    ("Default",   {"line": "#3b82f6", "border": "#3b82f6", "box": "#323256"}),
-    ("Cyberpunk", {"line": "#ff2bd6", "border": "#00f0ff", "box": "#2a0f45"}),
-    ("Sunset",    {"line": "#fb923c", "border": "#f43f5e", "box": "#4a1d2e"}),
-    ("Forest",    {"line": "#4ade80", "border": "#22c55e", "box": "#14342a"}),
-    ("Ocean",     {"line": "#38bdf8", "border": "#06b6d4", "box": "#0c3047"}),
-    ("Crimson",   {"line": "#ef4444", "border": "#dc2626", "box": "#3b1219"}),
-    ("Royal",     {"line": "#a78bfa", "border": "#8b5cf6", "box": "#2e1f5e"}),
-    ("Mono",      {"line": "#e5e7eb", "border": "#9ca3af", "box": "#2b2b2b"}),
+    ("Default",   {"line": "#3b82f6", "border": "#3b82f6", "box": "#323256", "accent": "#3b82f6"}),
+    ("Cyberpunk", {"line": "#ff2bd6", "border": "#00f0ff", "box": "#2a0f45", "accent": "#00f0ff"}),
+    ("Sunset",    {"line": "#fb923c", "border": "#f43f5e", "box": "#4a1d2e", "accent": "#fb923c"}),
+    ("Forest",    {"line": "#4ade80", "border": "#22c55e", "box": "#14342a", "accent": "#4ade80"}),
+    ("Ocean",     {"line": "#38bdf8", "border": "#06b6d4", "box": "#0c3047", "accent": "#38bdf8"}),
+    ("Crimson",   {"line": "#ef4444", "border": "#dc2626", "box": "#3b1219", "accent": "#ef4444"}),
+    ("Royal",     {"line": "#a78bfa", "border": "#8b5cf6", "box": "#2e1f5e", "accent": "#a78bfa"}),
+    ("Mono",      {"line": "#e5e7eb", "border": "#9ca3af", "box": "#2b2b2b", "accent": "#9ca3af"}),
 ]
 
-PAGE_ANIM_MS = 700                # sideways slide + fade duration between the Main / Preferences pages
-FADE_STEPS = 20                   # how many brightness steps a page fades through (fewer = cheaper)
-BG_FRAME_MS = 6                   # background line animation delay (6 ms = ~144 fps target)
-TAB_Y = 48                        # vertical centre of the Main / Preferences tab row
+PAGE_ANIM_MS = 700
+FADE_STEPS = 20
+BG_FRAME_MS = 6
+TAB_Y = 48
+
+# Background line curvature
+CURVE_AMOUNT = 0.06   # bulge as a fraction of line length (lower = straighter)
+CURVE_MAX = 10        # maximum bulge in pixels
+CURVE_STEPS = 14      # points per line (higher = smoother)
 
 
 def parse_hex(value):
-    """Return '#rrggbb' if the text is a valid hex colour (with or without #), else None."""
     v = str(value).strip().lstrip("#")
     if re.fullmatch(r"[0-9a-fA-F]{6}", v):
         return "#" + v.lower()
@@ -103,32 +107,20 @@ def hex_to_rgb(h):
 
 
 def mix_hex(c1, c2, t):
-    """Blend two '#rrggbb' colours: t=0 gives c1, t=1 gives c2."""
     a, b = hex_to_rgb(c1), hex_to_rgb(c2)
     return "#{:02x}{:02x}{:02x}".format(*(int(round(a[i] + (b[i] - a[i]) * t)) for i in range(3)))
 
 
 def rounded_points(x1, y1, x2, y2, r=4):
-    """Point list for a rounded rectangle, to be drawn as a smooth polygon."""
     r = min(r, (x2 - x1) / 2, (y2 - y1) / 2)
     return [
-        x1 + r, y1,
-        x2 - r, y1,
-        x2, y1,
-        x2, y1 + r,
-        x2, y2 - r,
-        x2, y2,
-        x2 - r, y2,
-        x1 + r, y2,
-        x1, y2,
-        x1, y2 - r,
-        x1, y1 + r,
-        x1, y1
+        x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
+        x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
+        x1, y2, x1, y2 - r, x1, y1 + r, x1, y1
     ]
 
 
 def round_rect_points(x1, y1, x2, y2, r, steps=6):
-    """Accurate rounded-rectangle outline (real circular corners) for a normal (non-smooth) polygon."""
     r = max(0, min(r, (x2 - x1) / 2, (y2 - y1) / 2))
     if r <= 0:
         return [x1, y1, x2, y1, x2, y2, x1, y2]
@@ -148,7 +140,6 @@ def ease_in_out_cubic(t):
 
 
 def cover_resize(img, w, h, resample=Image.LANCZOS):
-    """Scale + centre-crop an image so it exactly fills w x h (like CSS background-size: cover)."""
     if img.mode != "RGB":
         img = img.convert("RGB")
     s = max(w / img.width, h / img.height)
@@ -158,41 +149,86 @@ def cover_resize(img, w, h, resample=Image.LANCZOS):
     return img.crop((left, top, left + w, top + h))
 
 
+def clean_view(zoom, ox, oy):
+    """Clamp a saved background view to sane values -> [zoom, ox, oy]."""
+    return [min(max(float(zoom), BG_MIN_ZOOM), BG_MAX_ZOOM),
+            min(max(float(ox), -4.0), 4.0),
+            min(max(float(oy), -4.0), 4.0)]
+
+
+def image_layout(iw, ih, W, H, zoom, ox, oy):
+    """Where an iw x ih image sits inside a W x H frame.
+
+    zoom 1.0 is the "cover" size (fills the frame). ox / oy are the image centre's offset
+    from the frame centre, as fractions of the frame size, and are not limited to keeping
+    the frame covered: the image may be smaller than the frame or hang off its edges.
+    Only a 15% strip of the image is always kept inside so it can't be lost completely.
+    Returns (x0, y0, dw, dh, clamped_ox, clamped_oy).
+    """
+    k = max(W / iw, H / ih) * zoom
+    dw, dh = iw * k, ih * k
+    cx, cy = (0.5 + ox) * W, (0.5 + oy) * H
+    mx, my = 0.15 * W, 0.15 * H
+    cx = min(max(cx, mx - dw / 2), W + dw / 2 - mx)
+    cy = min(max(cy, my - dh / 2), H + dh / 2 - my)
+    return cx - dw / 2, cy - dh / 2, dw, dh, cx / W - 0.5, cy / H - 0.5
+
+
+def paste_scaled(dest, src, x0, y0, dw, dh, resample):
+    """Paste src scaled to dw x dh at (x0, y0) onto dest, drawing only the visible part.
+
+    Anything that falls outside dest is cropped off, and never resized, so very large
+    zoom levels stay cheap.
+    """
+    W, H = dest.size
+    if dw <= 0 or dh <= 0:
+        return
+    ix0, iy0 = max(0, int(math.floor(x0))), max(0, int(math.floor(y0)))
+    ix1, iy1 = min(W, int(math.ceil(x0 + dw))), min(H, int(math.ceil(y0 + dh)))
+    if ix1 <= ix0 or iy1 <= iy0:
+        return
+    sw, sh = src.size
+    box = ((ix0 - x0) / dw * sw, (iy0 - y0) / dh * sh,
+           (ix1 - x0) / dw * sw, (iy1 - y0) / dh * sh)
+    box = (max(0.0, box[0]), max(0.0, box[1]), min(float(sw), box[2]), min(float(sh), box[3]))
+    if box[2] - box[0] < 0.01 or box[3] - box[1] < 0.01:
+        return
+    dest.paste(src.resize((ix1 - ix0, iy1 - iy0), resample, box=box), (ix0, iy0))
+
+
 def smoothstep(t):
     t = min(max(t, 0.0), 1.0)
     return t * t * (3 - 2 * t)
 
 
 def _ui_scale(canvas):
-    """Current (width scale, height scale). The app keeps it on the canvas for the drawn widgets."""
     return getattr(canvas, "ui_scale", (1.0, 1.0))
 
 
 class Section:
-    """One box in the vertical stack. Panels can collapse to just their header."""
     def __init__(self, key, title, top, full_h, gap, panel=True, page="main"):
         self.key = key
-        self.page = page            # "main", "prefs" or "both" (which page shows this box)
+        self.page = page
         self.title = title
-        self.top = top              # current top Y (updated as boxes above open/close)
-        self.full_h = full_h        # height when open
-        self.gap = gap              # space above this box
-        self.panel = panel          # False = fixed row (no box, can't collapse)
-        self.h = full_h             # current height
-        self.tag = f"sec_{key}"     # every item in the section carries this tag (moved together)
-        self.ctag = f"sec_{key}_c"  # plain content items (hidden while they don't fit)
-        self.htag = f"sec_{key}_h"  # header items (title + arrow, hidden when the box is squashed away)
-        self.p = 1.0                # 1.0 open ... 0.0 closed
+        self.top = top
+        self.full_h = full_h
+        self.gap = gap
+        self.panel = panel
+        self.h = full_h
+        self.tag = f"sec_{key}"
+        self.ctag = f"sec_{key}_c"
+        self.htag = f"sec_{key}_h"
+        self.p = 1.0
         self.target = 1.0
         self.animating = False
         self.anim_from = 1.0
         self.anim_to = 1.0
         self.anim_dur = 0.0
         self.anim_start = 0.0
-        self.widgets = []           # sliders / checkboxes (hide themselves)
-        self.items = []             # [canvas_id, bottom_rel_to_top, visible]
+        self.widgets = []
+        self.items = []
         self.chevron = None
-        self.x = 0                  # current horizontal offset (pages slide sideways)
+        self.x = 0
 
     def height(self):
         if not self.panel:
@@ -201,7 +237,6 @@ class Section:
 
 
 class AutoClearEntry(tk.Entry):
-    """An Entry widget that displays a default value and clears it as soon as the user clicks to edit."""
     def __init__(self, master, textvariable, default_value, **kwargs):
         super().__init__(master, textvariable=textvariable, insertbackground="white", **kwargs)
         self.textvariable = textvariable
@@ -225,7 +260,6 @@ class AutoClearEntry(tk.Entry):
 
 
 class CanvasLabel:
-    """Label-like wrapper around a canvas text item (supports .config(text=..., fg=...))."""
     def __init__(self, canvas, x, y, text, fg, font, wrap=0, tags="ui_text"):
         self.canvas = canvas
         self.id = canvas.create_text(
@@ -243,8 +277,6 @@ class CanvasLabel:
 
 
 class CanvasButton:
-    """Button drawn directly on the canvas with real rounded corners.
-    Being plain canvas items (not a native widget) it moves at full speed when its box opens/closes."""
     def __init__(self, canvas, x1, y1, x2, y2, text, command, fill, fg, border,
                  font=("Segoe UI", 9, "bold"), radius=PRESET_BTN_RADIUS, tags="ui_text"):
         self.canvas = canvas
@@ -263,7 +295,6 @@ class CanvasButton:
         canvas.bind("<Motion>", self._on_motion, add="+")
 
     def hit(self, x, y):
-        """Is this (pixel) point on the button? Uses the live canvas position, so it follows every slide / scale."""
         if self.canvas.itemcget(self.poly, "state") == "hidden":
             return False
         bb = self.canvas.bbox(self.poly)
@@ -299,7 +330,6 @@ class CanvasButton:
 
 
 class CanvasCheckbox:
-    """Checkbox drawn directly on the canvas (no solid widget patch), so background lines show through."""
     def __init__(self, canvas, x, y, text, variable, fg, font, size=14, tags="ui_text"):
         self.canvas = canvas
         self.var = variable
@@ -319,19 +349,17 @@ class CanvasCheckbox:
         )
 
         bx = canvas.bbox(self.label)
-        self.hit_x = (x - 4, bx[2] + 4)     # layout (unscaled) coordinates
+        self.hit_x = (x - 4, bx[2] + 4)
 
         canvas.bind("<Button-1>", self._on_click, add="+")
         variable.trace_add("write", lambda *a: self.refresh())
         self.refresh()
 
     def cur_y(self):
-        """Current centre Y in layout units (the box moves when other boxes above it open/close)."""
         c = self.canvas.coords(self.box)
         return (c[1] + c[3]) / 2 / _ui_scale(self.canvas)[1]
 
     def shift_x(self, dx):
-        """The page slid sideways: move the click area with it."""
         self.hit_x = (self.hit_x[0] + dx, self.hit_x[1] + dx)
 
     def _on_click(self, event):
@@ -344,7 +372,6 @@ class CanvasCheckbox:
             self.var.set(not self.var.get())
 
     def set_visible(self, visible):
-        """Show/hide the whole checkbox (used while its box opens/closes)."""
         if visible == self.visible:
             return
         self.visible = visible
@@ -352,6 +379,11 @@ class CanvasCheckbox:
         self.canvas.itemconfigure(self.box, state=state)
         self.canvas.itemconfigure(self.label, state=state)
         self.refresh()
+
+    def set_accent(self, colour):
+        """Update the checkbox border to match the current accent colour."""
+        if self.enabled:
+            self.canvas.itemconfigure(self.box, outline=colour)
 
     def refresh(self):
         show_tick = self.var.get() and self.visible
@@ -369,19 +401,17 @@ class CanvasCheckbox:
 
 
 class CanvasSlider:
-    """Slider drawn directly on the canvas (thin track + rounded handle), so background lines show through."""
     def __init__(self, canvas, x0, x1, y, from_, to, resolution, variable, command=None, tags="ui_text"):
         self.canvas = canvas
-        self.x0, self.x1 = x0, x1           # layout (unscaled) coordinates
+        self.x0, self.x1 = x0, x1
         self.from_, self.to, self.res = from_, to, resolution
         self.var = variable
         self.command = command
         self.enabled = True
         self.visible = True
         self.dragging = False
-        self.extra_items = []   # extra canvas items (e.g. the slider's label) hidden together with it
+        self.extra_items = []
 
-        # Decimal places to show, based on resolution
         self.decimals = 0
         r = resolution
         while self.decimals < 4 and abs(r - round(r)) > 1e-9:
@@ -392,7 +422,6 @@ class CanvasSlider:
             x0, y, x1, y, fill="#2b2b45", width=4, capstyle="round", tags=tags)
         self.fill_line = canvas.create_line(
             x0, y, x0, y, fill=ACCENT_BLUE, width=4, capstyle="round", tags=tags)
-        # Rounded handle (smooth polygon)
         self.handle = canvas.create_polygon(
             *rounded_points(x0 - 6, y - 9, x0 + 6, y + 9, 4),
             smooth=True, fill=ACCENT_PURPLE, outline=TEXT_LIGHT, width=1, tags=tags)
@@ -406,11 +435,9 @@ class CanvasSlider:
         self.refresh()
 
     def cur_y(self):
-        """Current Y of the track in layout units (it moves when other boxes above it open/close)."""
         return self.canvas.coords(self.track)[1] / _ui_scale(self.canvas)[1]
 
     def shift_x(self, dx):
-        """The page slid sideways: shift the track's x range (the canvas items were moved already)."""
         self.x0 += dx
         self.x1 += dx
 
@@ -418,8 +445,7 @@ class CanvasSlider:
         sx, sy = _ui_scale(self.canvas)
         ex, ey = event.x / sx, event.y / sy
         y = self.cur_y()
-        return (self.x0 - 10 <= ex <= self.x1 + 10 and
-                y - 14 <= ey <= y + 14)
+        return (self.x0 - 10 <= ex <= self.x1 + 10 and y - 14 <= ey <= y + 14)
 
     def _press(self, event):
         if self.enabled and self.visible and self._in_hit_area(event):
@@ -445,7 +471,6 @@ class CanvasSlider:
                 self.command(value)
 
     def set_visible(self, visible):
-        """Show/hide the whole slider (used while its box opens/closes)."""
         if visible == self.visible:
             return
         self.visible = visible
@@ -454,6 +479,11 @@ class CanvasSlider:
         state = "normal" if visible else "hidden"
         for item in (self.track, self.fill_line, self.handle, self.text, *self.extra_items):
             self.canvas.itemconfigure(item, state=state)
+
+    def set_accent(self, colour):
+        """Update the fill line colour to match the current accent colour."""
+        if self.enabled:
+            self.canvas.itemconfigure(self.fill_line, fill=colour)
 
     def refresh(self):
         try:
@@ -491,6 +521,532 @@ class CanvasSlider:
             self.refresh()
 
 
+class BackgroundAdjustDialog(tk.Toplevel):
+    """Free-form editor for the background image, styled like the main window.
+
+    The bright rectangle is the area of the app background. The image can be moved and
+    zoomed freely, including past the edges of that rectangle or smaller than it; the
+    parts outside the rectangle (shown dimmed) are cropped off when you press Apply.
+    on_apply(zoom, ox, oy) is called with the final placement.
+    """
+    MAX_W = 300
+    MARGIN = 40          # extra space around the frame so you can see what hangs off it
+    PAD = PANEL_X1       # outer padding, same as the main window's panels
+
+    def __init__(self, parent, img, aspect, visible_frac, opacity, view, on_apply, style):
+        super().__init__(parent)
+        self.overrideredirect(True)
+        self.title("Adjust Background Image")
+        self.configure(bg=BG_MAIN)
+        self.attributes("-topmost", True)
+        self.attributes("-alpha", style["window_alpha"])
+
+        self._closed = False
+        self._imgs = []
+        self._tick_job = None
+        self._render_job = None
+        self._render_last = 0.0
+
+        self.st = style
+        self.accent = style["accent"]
+        self.border = style["border"]
+        self.on_apply = on_apply
+        self.opacity = min(max(float(opacity), 0.0), 1.0)
+        self.aspect = max(float(aspect), 0.05)
+        self.visible_frac = min(max(float(visible_frac), 0.0), 1.0)
+
+        # Preview frame size (same shape as the real background)
+        M = self.MARGIN
+        max_h = max(240, min(460, parent.winfo_screenheight() - 346 - 2 * M - 110))
+        if self.aspect >= self.MAX_W / max_h:
+            self.PREV_W = self.MAX_W
+            self.PREV_H = max(40, int(round(self.MAX_W / self.aspect)))
+        else:
+            self.PREV_H = max_h
+            self.PREV_W = max(40, int(round(max_h * self.aspect)))
+        self.SW, self.SH = self.PREV_W + 2 * M, self.PREV_H + 2 * M
+
+        self.orig = img.convert("RGB")
+        self.work = self.orig.copy()
+        self.work.thumbnail((1600, 1600), Image.LANCZOS)   # fast preview copy
+
+        self.zoom, self.ox, self.oy = clean_view(*view)
+        self._drag = None
+        self._photo = None
+        self.zoom_var = tk.DoubleVar(self, value=self.zoom)
+        self.show_opacity = tk.BooleanVar(self, value=True)
+
+        # Window dragging state (smoothed, same as the main window)
+        self._win_drag = None
+        self._native = False
+        self._released = False
+        self._pos = [0.0, 0.0]
+        self._target = (0.0, 0.0)
+        self._last_pos = (0, 0)
+        self._last_t = 0.0
+        self._drag_off = (0, 0)
+        self._hwnd = None
+        self._timer_on = False
+
+        self._build()
+        self._init_net()
+        self._render()
+        self.show_opacity.trace_add("write", lambda *a: self._render())
+
+        # Place beside the main window if it fits, otherwise centre on the screen
+        self.update_idletasks()
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        x = parent.winfo_rootx() + parent.winfo_width() + 12
+        if x + self.D_W > sw:
+            x = max(0, (sw - self.D_W) // 2)
+        y = max(0, min(parent.winfo_rooty(), sh - self.D_H - 40))
+        self.geometry(f"{self.D_W}x{self.D_H}+{x}+{y}")
+
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.bind("<Return>", lambda e: self._apply())
+        try:
+            self.wait_visibility()
+            self.grab_set()
+        except tk.TclError:
+            pass
+        self.focus_force()
+
+        self._last_net_t = time.perf_counter()
+        self._tick()
+
+    # ---------- UI ----------
+    def _panel(self, top, h):
+        st = self.st
+        w = self.D_W - 2 * self.PAD
+        r = max(0, min(int(st["radius"]), h // 2, w // 2))
+        a = int(255 * st["box_alpha"])
+        fill = hex_to_rgb(st["box"])
+        border = hex_to_rgb(self.border)
+        im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        if r > 0:
+            d.rounded_rectangle([0, 0, w - 1, h - 1], radius=r,
+                                fill=fill + (a,), outline=border + (255,), width=1)
+        else:
+            d.rectangle([0, 0, w - 1, h - 1], fill=fill + (a,), outline=border + (255,), width=1)
+        ph = ImageTk.PhotoImage(im)
+        self._imgs.append(ph)
+        self.canvas.create_image(self.PAD, top, image=ph, anchor="nw", tags="panel")
+
+    def _header(self, top, text):
+        self.canvas.create_text(self.PAD + 14, top + 16, text=text, anchor="w",
+                                font=("Segoe UI", 9, "bold"), fill=self.accent)
+
+    def _build(self):
+        PAD, M, st = self.PAD, self.MARGIN, self.st
+        self.D_W = max(440, self.SW + 28 + 2 * PAD)
+        panel_w = self.D_W - 2 * PAD
+
+        p1_top = BAR_H + 12
+        self.stage_x = PAD + (panel_w - self.SW) // 2
+        self.stage_y = p1_top + 76
+        p1_h = 76 + self.SH + 14
+        p2_top = p1_top + p1_h + 10
+        p2_h = 146
+        btn_top = p2_top + p2_h + 14
+        self.D_H = btn_top + 30 + 18
+
+        c = self.canvas = tk.Canvas(self, width=self.D_W, height=self.D_H, bg=BG_MAIN,
+                                    highlightthickness=0)
+        c.ui_scale = (1.0, 1.0)
+        c.pack()
+
+        # Title bar (same translucent bar as the main window)
+        bar = Image.new("RGBA", (self.D_W, BAR_H), (0, 0, 0, int(255 * st["bar_alpha"])))
+        ImageDraw.Draw(bar).line([(0, BAR_H - 1), (self.D_W, BAR_H - 1)],
+                                 fill=hex_to_rgb(self.border) + (255,), width=1)
+        bar_ph = ImageTk.PhotoImage(bar)
+        self._imgs.append(bar_ph)
+        c.create_image(0, 0, image=bar_ph, anchor="nw", tags="bar")
+        c.create_text(14, BAR_H / 2, text="ADJUST BACKGROUND IMAGE", anchor="w",
+                      font=("Segoe UI", 10, "bold"), fill=TEXT_LIGHT)
+        self.close_txt = c.create_text(self.D_W - 18, BAR_H / 2, text="\u2715",
+                                       font=("Segoe UI", 11), fill=TEXT_LIGHT)
+
+        # Preview panel
+        self._panel(p1_top, p1_h)
+        self._header(p1_top, "IMAGE PREVIEW")
+        c.create_text(self.D_W / 2, p1_top + 40, anchor="n", justify="center",
+                      text="Drag to move  \u2022  Scroll or use the slider to zoom\n"
+                           "Anything outside the bright frame is cropped off",
+                      font=("Segoe UI", 9), fill=TEXT_MUTED)
+
+        # Controls panel
+        self._panel(p2_top, p2_h)
+        self._header(p2_top, "ADJUSTMENTS")
+        c.create_text(PAD + 14, p2_top + 66, text="Zoom:", anchor="w",
+                      font=("Segoe UI", 9), fill=TEXT_LIGHT)
+        self.zoom_slider = CanvasSlider(
+            c, PAD + 84, self.D_W - PAD - 14, p2_top + 66, BG_MIN_ZOOM, BG_MAX_ZOOM, 0.01,
+            self.zoom_var, self._on_slider, tags="ui")
+        self.opacity_check = CanvasCheckbox(
+            c, PAD + 14, p2_top + 100, "Preview at current image opacity", self.show_opacity,
+            TEXT_LIGHT, ("Segoe UI", 9), tags="ui")
+        self.zoom_slider.set_accent(self.accent)
+        self.opacity_check.set_accent(self.accent)
+        c.create_text(PAD + 14, p2_top + 126, anchor="w",
+                      text=f"Original: {self.orig.width} x {self.orig.height} px",
+                      font=("Segoe UI", 8), fill=TEXT_MUTED)
+
+        # Buttons (border matches fill, so no coloured outline)
+        bw, gap = (panel_w - 2 * 10) // 3, 10
+        specs = (("Reset", self._reset, ACCENT_PURPLE),
+                 ("Cancel", self.destroy, BTN_RED),
+                 ("Apply", self._apply, BTN_GREEN))
+        self.buttons = []
+        for i, (text, cmd, colour) in enumerate(specs):
+            bx = PAD + i * (bw + gap)
+            self.buttons.append(CanvasButton(
+                c, bx, btn_top, bx + bw, btn_top + 30, text, cmd,
+                fill=colour, fg="white", border=colour,
+                font=("Segoe UI", 9, "bold"), radius=PRESET_BTN_RADIUS, tags="ui"))
+
+        c.bind("<ButtonPress-1>", self._press, add="+")
+        c.bind("<B1-Motion>", self._move, add="+")
+        c.bind("<ButtonRelease-1>", self._release, add="+")
+        c.bind("<MouseWheel>", self._wheel, add="+")
+        c.bind("<Motion>", self._hover, add="+")
+
+    # ---------- Animated line network (same settings as the main window) ----------
+    def _init_net(self):
+        st = self.st
+        self.max_lines = min(MAX_LINES_LIMIT, int(st["line_count"]))
+        n = int(5 * math.sqrt(self.max_lines)) if self.max_lines > 0 else 0
+        self.particles = [{
+            "x": random.uniform(0, self.D_W), "y": random.uniform(0, self.D_H),
+            "vx": random.uniform(-0.5, 0.5), "vy": random.uniform(-0.5, 0.5),
+            "id": random.getrandbits(32), "phase": random.uniform(0, math.tau),
+        } for _ in range(n)]
+        self.mx, self.my = self.D_W / 2, self.D_H / 2
+        self.tx, self.ty = self.mx, self.my
+
+    def _draw_net(self, t0, dt):
+        st = self.st
+        c = self.canvas
+        c.delete("net")
+        if self.max_lines <= 0 or not self.particles:
+            return
+        W, H = self.D_W, self.D_H
+        f = min(dt / 0.025, 3.0)
+        speed = st["anim_speed"]
+        spread = st["spread"]
+        repel = spread * 110
+        link_max = 100 + spread * 140
+
+        ease = 1.0 - (1.0 - min(0.1 * speed, 0.99)) ** f
+        self.mx += (self.tx - self.mx) * ease
+        self.my += (self.ty - self.my) * ease
+
+        base = hex_to_rgb(st["line_colour"])
+        a = st["line_alpha"]
+        line_color = "#{:02x}{:02x}{:02x}".format(
+            int(18 + (base[0] - 18) * a), int(18 + (base[1] - 18) * a), int(31 + (base[2] - 31) * a))
+
+        P = self.particles
+        for p in P:
+            p["x"] += p["vx"] * speed * f
+            p["y"] += p["vy"] * speed * f
+            if p["x"] < 0 or p["x"] > W: p["vx"] *= -1
+            if p["y"] < 0 or p["y"] > H: p["vy"] *= -1
+            p["x"] = min(max(p["x"], 0), W)
+            p["y"] = min(max(p["y"], 0), H)
+            p["phase"] = (p["phase"] + 0.008 * speed * f) % math.tau
+
+        if repel > 0:
+            n = len(P)
+            for i in range(n):
+                p1 = P[i]
+                for j in range(i + 1, n):
+                    p2 = P[j]
+                    dx, dy = p1["x"] - p2["x"], p1["y"] - p2["y"]
+                    d = math.hypot(dx, dy)
+                    if 0 < d < repel:
+                        push = (repel - d) * 0.04 * f
+                        nx, ny = dx / d, dy / d
+                        p1["x"] += nx * push; p1["y"] += ny * push
+                        p2["x"] -= nx * push; p2["y"] -= ny * push
+            for p in P:
+                p["x"] = min(max(p["x"], 0), W)
+                p["y"] = min(max(p["y"], 0), H)
+
+        nodes = P + [{"x": self.mx, "y": self.my}]
+        links = []
+        for i in range(len(nodes)):
+            p1 = nodes[i]
+            for j in range(i + 1, len(nodes)):
+                p2 = nodes[j]
+                dist = math.hypot(p1["x"] - p2["x"], p1["y"] - p2["y"])
+                if dist < link_max:
+                    links.append((dist, p1, p2))
+        if len(links) > self.max_lines:
+            links.sort(key=lambda l: l[0])
+            links = links[:self.max_lines]
+
+        for _, p1, p2 in links:
+            ax, ay, bx, by = p1["x"], p1["y"], p2["x"], p2["y"]
+            dx, dy = bx - ax, by - ay
+            d = math.hypot(dx, dy)
+            if d < 1:
+                continue
+            pxu, pyu = -dy / d, dx / d
+            sign = 1 if (p1.get("id", 0) ^ p2.get("id", 0)) & 1 else -1
+            wave = math.sin(t0 * 0.4 + (p1.get("phase", 0) + p2.get("phase", 0)) * 0.5)
+            bulge = sign * min(CURVE_MAX, d * CURVE_AMOUNT * (1.0 + 0.25 * wave))
+            cpx = (ax + bx) / 2 + pxu * bulge
+            cpy = (ay + by) / 2 + pyu * bulge
+            pts = []
+            for s in range(CURVE_STEPS + 1):
+                t = s / CURVE_STEPS
+                mt = 1.0 - t
+                pts += [mt * mt * ax + 2 * mt * t * cpx + t * t * bx,
+                        mt * mt * ay + 2 * mt * t * cpy + t * t * by]
+            c.create_line(*pts, fill=line_color, width=1.5, tags="net",
+                          capstyle="round", joinstyle="round")
+        c.tag_lower("net")
+
+    def _tick(self):
+        if self._closed:
+            return
+        t0 = time.perf_counter()
+        dt = min(t0 - self._last_net_t, 0.1)
+        self._last_net_t = t0
+        try:
+            if self._win_drag is None and self._drag is None:
+                self._draw_net(t0, dt)
+            work_ms = (time.perf_counter() - t0) * 1000.0
+            self._tick_job = self.after(max(4, int(BG_FRAME_MS - work_ms)), self._tick)
+        except tk.TclError:
+            pass
+
+    # ---------- Rendering ----------
+    def _schedule_render(self):
+        """Coalesce renders so dragging / zooming updates at ~DRAG_INTERVAL_MS."""
+        if self._render_job is not None:
+            return
+        wait = max(1, int(DRAG_INTERVAL_MS - (time.perf_counter() - self._render_last) * 1000.0))
+        self._render_job = self.after(wait, self._render_now)
+
+    def _render_now(self):
+        self._render_job = None
+        self._render(fast=True)
+        self._render_last = time.perf_counter()
+
+    def _render(self, fast=False):
+        if self._closed:
+            return
+        PW, PH, M = self.PREV_W, self.PREV_H, self.MARGIN
+        SW, SH = self.SW, self.SH
+        iw, ih = self.work.size
+        x0, y0, dw, dh, self.ox, self.oy = image_layout(iw, ih, PW, PH, self.zoom, self.ox, self.oy)
+
+        # Whole stage with the image placed on it (parts outside the frame included)
+        layer = Image.new("RGB", (SW, SH), (18, 18, 31))
+        paste_scaled(layer, self.work, x0 + M, y0 + M, dw, dh,
+                     Image.NEAREST if fast else Image.BILINEAR)
+
+        # Outside the frame: dimmed. Inside: how it will really look.
+        stage = Image.blend(Image.new("RGB", (SW, SH), (6, 6, 10)), layer, 0.45)
+        inner = layer.crop((M, M, M + PW, M + PH))
+        if self.show_opacity.get():
+            inner = Image.blend(Image.new("RGB", inner.size, (18, 18, 31)), inner, self.opacity)
+        stage.paste(inner, (M, M))
+
+        self._photo = ImageTk.PhotoImage(stage)
+        c = self.canvas
+        c.delete("stage")
+        sx, sy = self.stage_x, self.stage_y
+        c.create_image(sx, sy, anchor="nw", image=self._photo, tags="stage")
+        c.create_rectangle(sx + M, sy + M, sx + M + PW, sy + M + PH,
+                           outline=self.accent, width=2, tags="stage")
+
+        # Marker showing where the bottom of the app window currently sits
+        if self.visible_frac < 0.99:
+            y = sy + M + int(PH * self.visible_frac)
+            c.create_line(sx + M, y, sx + M + PW, y, fill=self.accent, dash=(6, 4),
+                          width=2, tags="stage")
+            c.create_text(sx + M + 6, y - 8, text="window bottom", anchor="w",
+                          fill="#000000", font=("Segoe UI", 8, "bold"), tags="stage")
+            c.create_text(sx + M + 5, y - 9, text="window bottom", anchor="w",
+                          fill="#ffffff", font=("Segoe UI", 8, "bold"), tags="stage")
+
+    # ---------- Smooth window dragging (same as the main window) ----------
+    def _start_native_drag(self):
+        user32 = ctypes.windll.user32
+        user32.GetParent.restype = wt.HWND
+        user32.GetParent.argtypes = [wt.HWND]
+        user32.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int, ctypes.c_int,
+                                        ctypes.c_int, ctypes.c_int, wt.UINT]
+        user32.SetWindowPos.restype = wt.BOOL
+
+        hwnd = user32.GetParent(self.winfo_id())
+        pt = wt.POINT()
+        rect = wt.RECT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+
+        self._hwnd = hwnd
+        self._drag_off = (pt.x - rect.left, pt.y - rect.top)
+        self._pos = [float(rect.left), float(rect.top)]
+        self._target = (float(rect.left), float(rect.top))
+        self._last_pos = (rect.left, rect.top)
+        self._last_t = time.perf_counter()
+        self._released = False
+        self._native = True
+        try:
+            ctypes.windll.winmm.timeBeginPeriod(1)
+            self._timer_on = True
+        except Exception:
+            pass
+        self._drag_tick()
+
+    def _drag_tick(self):
+        if self._closed or not (self._win_drag is not None and self._native):
+            return
+        user32 = ctypes.windll.user32
+        now = time.perf_counter()
+        dt = min(now - self._last_t, 0.05)
+        self._last_t = now
+
+        if not self._released:
+            if not (user32.GetAsyncKeyState(0x01) & 0x8000):
+                self._released = True
+            else:
+                pt = wt.POINT()
+                user32.GetCursorPos(ctypes.byref(pt))
+                self._target = (pt.x - self._drag_off[0], pt.y - self._drag_off[1])
+
+        k = 1.0 - math.exp(-DRAG_SMOOTHING * dt)
+        self._pos[0] += (self._target[0] - self._pos[0]) * k
+        self._pos[1] += (self._target[1] - self._pos[1]) * k
+
+        settled = (abs(self._target[0] - self._pos[0]) < 0.5 and
+                   abs(self._target[1] - self._pos[1]) < 0.5)
+        if self._released and settled:
+            self._pos = [self._target[0], self._target[1]]
+
+        nx, ny = int(round(self._pos[0])), int(round(self._pos[1]))
+        if (nx, ny) != self._last_pos:
+            user32.SetWindowPos(self._hwnd, None, nx, ny, 0, 0, 0x0001 | 0x0004 | 0x0010)
+            self._last_pos = (nx, ny)
+
+        if self._released and settled:
+            self._end_win_drag()
+            return
+        self.after(DRAG_INTERVAL_MS, self._drag_tick)
+
+    def _end_win_drag(self):
+        self._win_drag = None
+        self._native = False
+        if self._timer_on:
+            self._timer_on = False
+            try:
+                ctypes.windll.winmm.timeEndPeriod(1)
+            except Exception:
+                pass
+
+    # ---------- Interaction ----------
+    def _in_stage(self, x, y):
+        return (self.stage_x <= x <= self.stage_x + self.SW and
+                self.stage_y <= y <= self.stage_y + self.SH)
+
+    def _zoom_at(self, z1, ax, ay):
+        """Zoom to z1 keeping the point (ax, ay) (frame pixels) fixed on screen."""
+        z1 = min(max(float(z1), BG_MIN_ZOOM), BG_MAX_ZOOM)
+        PW, PH = self.PREV_W, self.PREV_H
+        r = z1 / self.zoom
+        cx = ax + ((0.5 + self.ox) * PW - ax) * r
+        cy = ay + ((0.5 + self.oy) * PH - ay) * r
+        self.ox, self.oy = cx / PW - 0.5, cy / PH - 0.5
+        self.zoom = z1
+        self._schedule_render()
+
+    def _on_slider(self, value):
+        self._zoom_at(float(value), self.PREV_W / 2, self.PREV_H / 2)
+
+    def _wheel(self, event):
+        if not self._in_stage(event.x, event.y):
+            return
+        z = self.zoom * (1.1 if event.delta > 0 else 1 / 1.1)
+        self._zoom_at(z, event.x - self.stage_x - self.MARGIN, event.y - self.stage_y - self.MARGIN)
+        self.zoom_var.set(round(self.zoom, 2))
+
+    def _press(self, event):
+        if event.y < BAR_H:
+            if event.x >= self.D_W - 36:
+                self.destroy()
+                return
+            self._win_drag = (event.x_root - self.winfo_x(), event.y_root - self.winfo_y())
+            self._native = False
+            if os.name == "nt":
+                try:
+                    self._start_native_drag()
+                except Exception:
+                    self._native = False
+        elif self._in_stage(event.x, event.y):
+            self._drag = (event.x, event.y)
+
+    def _move(self, event):
+        if self._win_drag is not None:
+            if not self._native:
+                self.geometry(f"+{event.x_root - self._win_drag[0]}+{event.y_root - self._win_drag[1]}")
+        elif self._drag is not None:
+            dx, dy = event.x - self._drag[0], event.y - self._drag[1]
+            self._drag = (event.x, event.y)
+            self.ox += dx / self.PREV_W
+            self.oy += dy / self.PREV_H
+            self._schedule_render()
+
+    def _release(self, event):
+        if self._drag is not None:
+            self._drag = None
+            self._render()            # final high-quality render
+        if self._win_drag is not None:
+            if self._native:
+                self._released = True  # let the smoothing settle, then it ends itself
+            else:
+                self._win_drag = None
+
+    def _hover(self, event):
+        self.tx, self.ty = event.x, event.y
+        over_close = event.y < BAR_H and event.x >= self.D_W - 36
+        self.canvas.itemconfigure(self.close_txt, fill="#ef4444" if over_close else TEXT_LIGHT)
+        if self._in_stage(event.x, event.y):
+            cursor = "fleur"
+        elif over_close or any(b.hit(event.x, event.y) for b in self.buttons):
+            cursor = "hand2"
+        else:
+            cursor = ""
+        self.canvas.config(cursor=cursor)
+
+    def _reset(self):
+        self.zoom, self.ox, self.oy = 1.0, 0.0, 0.0
+        self.zoom_var.set(1.0)
+        self._render()
+
+    def _apply(self):
+        zoom, ox, oy = self.zoom, self.ox, self.oy
+        self.destroy()
+        self.on_apply(zoom, ox, oy)
+
+    def destroy(self):
+        if self._closed:
+            return
+        self._closed = True
+        for job in (self._tick_job, self._render_job):
+            if job is not None:
+                try:
+                    self.after_cancel(job)
+                except Exception:
+                    pass
+        self._end_win_drag()
+        super().destroy()
+
+
 class ScreenshotterApp:
     def __init__(self, root):
         self.root = root
@@ -499,7 +1055,6 @@ class ScreenshotterApp:
         self.root.resizable(False, False)
         self.root.configure(bg=BG_MAIN)
 
-        # Remove the native (white) title bar; a custom one is drawn on the canvas
         self.root.overrideredirect(True)
         self.minimized = False
         self._dragging = False
@@ -514,12 +1069,11 @@ class ScreenshotterApp:
         self._target = (0.0, 0.0)
         self._last_t = 0.0
 
-        # Window scaling state (everything is laid out in "layout units"; scale turns them into pixels)
-        self.sx = 1.0                # width scale  (window width  = WIN_W * sx)
-        self.sy = 1.0                # height scale (window height = content height * sy)
+        self.sx = 1.0
+        self.sy = 1.0
         self._rs_last = 0.0
         self._font_scale_applied = 1.0
-        self._resizing = None        # None, "right", "bottom" or "corner" while a resize drag is active
+        self._resizing = None
         self._rs_off = (0.0, 0.0)
         self._rs_target = None
         self._rs_job = None
@@ -527,7 +1081,6 @@ class ScreenshotterApp:
         self._ppp = 1.333
         self._bg_cache = None
 
-        # Runtime state
         self.is_armed = False
         self.is_running = False
         self.stop_thread = False
@@ -536,12 +1089,11 @@ class ScreenshotterApp:
         self.worker_thread = None
         self._save_job = None
 
-        # Collapsible box state
         self.page = "main"
-        self.page_pos = 0.0       # 0.0 = Main page, 1.0 = Preferences page (animated)
+        self.page_pos = 0.0
         self._page_anim = False
-        self._fade_q = {p: 1.0 for p in PAGES}        # current (stepped) opacity of each sliding page
-        self._snap = None                             # true colours of the page items while fading
+        self._fade_q = {p: 1.0 for p in PAGES}
+        self._snap = None
         self._panels_dirty = True
         self._bar_sig = None
         self._timer_refs = 0
@@ -550,27 +1102,22 @@ class ScreenshotterApp:
         self.page_dur = 0.0
         self.page_start = 0.0
         self.stack = []
-        self.win_h = WIN_H              # current window height (layout units)
+        self.win_h = WIN_H
         self._anim_job = None
         self._timer_res_on = False
+        self._dialog_open = False
 
-        # Smooth cursor network animation particles (layout units)
         self.mouse_x = WIN_W / 2
         self.mouse_y = WIN_H / 2
         self.target_x = WIN_W / 2
         self.target_y = WIN_H / 2
 
-        # Particle count is driven by the Line Count slider
         self.particles = []
-
-        # Caches of translucent panel images
         self.panel_cache = {}
         self.bar_cache = {}
 
-        # Load saved configuration if it exists
         saved_config = self.load_config()
 
-        # Configuration variables
         self.dir_var = tk.StringVar(value=saved_config.get("dir", ""))
         self.max_shots_var = tk.StringVar(value=saved_config.get("max_shots", ""))
         self.max_mb_var = tk.StringVar(value=saved_config.get("max_mb", ""))
@@ -590,20 +1137,24 @@ class ScreenshotterApp:
         self.spread_var = tk.DoubleVar(value=saved_config.get("spread", 0.5))
         self.bar_opacity_var = tk.DoubleVar(value=saved_config.get("bar_opacity", 0.85))
 
-        # Colour settings (hex strings)
         self.line_colour_var = tk.StringVar(value=saved_config.get("line_colour", DEFAULT_LINE_COLOUR))
         self.border_colour_var = tk.StringVar(value=saved_config.get("border_colour", DEFAULT_BORDER_COLOUR))
         self.box_colour_var = tk.StringVar(value=saved_config.get("box_colour", DEFAULT_BOX_COLOUR))
+        self.accent_colour_var = tk.StringVar(value=saved_config.get("accent_colour", DEFAULT_ACCENT_COLOUR))
         self.colour_widgets = []
         self.theme_widgets = []
         self.image_opacity_var = tk.DoubleVar(value=saved_config.get("image_opacity", 0.5))
-        self.bg_src = None            # prepared background image (PIL, WIN_W*k x BG_IMG_H*k) or None
+        try:
+            self.bg_view = clean_view(saved_config.get("bg_zoom", 1.0),
+                                      saved_config.get("bg_ox", 0.0),
+                                      saved_config.get("bg_oy", 0.0))
+        except (TypeError, ValueError):
+            self.bg_view = [1.0, 0.0, 0.0]
+        self.bg_src = None
         self._bg_photo = None
 
-        # Apply initial window opacity
         self.root.attributes('-alpha', self.opacity_var.get())
 
-        # Validated runtime values
         self.max_screenshots = 0
         self.max_folder_size_mb = 0.0
         self.interval = 0.0
@@ -617,30 +1168,28 @@ class ScreenshotterApp:
         self.build_ui()
         self.update_box_theme()
 
-        # Background image (if one was saved) and live re-render when its opacity changes
         self._load_bg_source()
         self.render_background()
         self.image_opacity_var.trace_add("write", lambda *a: self.render_background())
 
-        # Lay out the starting page (the Preferences page waits off to the right)
         self._apply_layout(self.stack)
 
-        # Auto-save appearance settings whenever they change
         for var in (self.opacity_var, self.bar_opacity_var, self.box_opacity_var,
                     self.line_opacity_var, self.box_radius_var, self.anim_speed_var,
                     self.line_count_var, self.spread_var, self.notify_var,
                     self.line_colour_var, self.border_colour_var, self.box_colour_var,
-                    self.image_opacity_var):
+                    self.image_opacity_var, self.accent_colour_var):
             var.trace_add("write", lambda *a: self.schedule_save())
 
-        # Box look changed -> redraw the translucent boxes on the next frame
         for var in (self.box_opacity_var, self.box_radius_var,
                     self.box_colour_var, self.border_colour_var):
             var.trace_add("write", lambda *a: setattr(self, "_panels_dirty", True))
 
+        # Live-update all accent-coloured canvas items when accent colour changes
+        self.accent_colour_var.trace_add("write", lambda *a: self._apply_accent_colour())
+
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        # Cursor tracking, title bar dragging, window resizing & smooth network animation
         self.root.bind("<Motion>", self.on_mouse_motion)
         self.root.bind("<Map>", self.on_map)
         self.bg_canvas.bind("<ButtonPress-1>", self.bar_press, add="+")
@@ -653,7 +1202,6 @@ class ScreenshotterApp:
         self.bg_canvas.bind("<ButtonRelease-1>", self.resize_release, add="+")
         self.bg_canvas.bind("<Motion>", self.bar_hover, add="+")
 
-        # Restore the window size from last time
         try:
             old = float(saved_config.get("window_scale", 1.0))
             self.set_scale(float(saved_config.get("window_sx", old)),
@@ -663,18 +1211,59 @@ class ScreenshotterApp:
         self._place_grip()
 
         self.root.after(50, self.show_in_taskbar)
-        self._set_timer_resolution(True)     # fine Windows timer so 6 ms frames really run at ~6 ms
+        self._set_timer_resolution(True)
         self._bg_last = time.perf_counter()
         self.animate_background()
 
+        # Apply the saved accent colour on startup
+        self._apply_accent_colour()
+
     @property
     def scale(self):
-        """Uniform scale used for text, line widths and corner radii (the smaller of width / height scale)."""
         return min(self.sx, self.sy)
+
+    def _accent(self):
+        """Current accent colour, falling back to the default blue."""
+        return parse_hex(self.accent_colour_var.get()) or DEFAULT_ACCENT_COLOUR
+
+    def _apply_accent_colour(self):
+        """Repaint every canvas item that uses the accent (blue) colour."""
+        colour = self._accent()
+        c = self.bg_canvas
+
+        # Tab indicator underline
+        if hasattr(self, "tab_indicator"):
+            c.itemconfigure(self.tab_indicator, fill=colour)
+
+        # Section header titles and chevrons
+        for s in self.stack:
+            if s.panel and s.title:
+                for item in c.find_withtag(s.htag):
+                    kind = c.type(item)
+                    if kind == "text":
+                        c.itemconfigure(item, fill=colour)
+                    elif kind == "line":
+                        c.itemconfigure(item, fill=colour)
+
+        # Sliders: fill lines and checkbox borders
+        for s in self.stack:
+            for w in s.widgets:
+                if isinstance(w, CanvasSlider) and w.enabled:
+                    c.itemconfigure(w.fill_line, fill=colour)
+                elif isinstance(w, CanvasCheckbox) and w.enabled:
+                    c.itemconfigure(w.box, outline=colour)
+
+        # Colour swatch entry border highlight update (the swatch itself is handled by _refresh_swatch)
+        ok = parse_hex(self.accent_colour_var.get())
+        if hasattr(self, "accent_swatch") and ok:
+            self.accent_swatch.config(bg=ok, activebackground=ok)
+
+        # Update the global ACCENT_BLUE used by refresh() methods so newly drawn items use the new colour
+        global ACCENT_BLUE
+        ACCENT_BLUE = colour
 
     # ---------- Colour helpers ----------
     def _rgb(self, var, default):
-        """RGB tuple from a hex variable; falls back to the default while the text is invalid."""
         return hex_to_rgb(parse_hex(var.get()) or default)
 
     def _refresh_swatch(self, var, swatch, entry):
@@ -691,7 +1280,6 @@ class ScreenshotterApp:
 
     # ---------- Window scaling ----------
     def _max_scales(self):
-        """Largest width / height scale that still fits on the screen."""
         try:
             sw = self.root.winfo_screenwidth()
             sh = self.root.winfo_screenheight() - 80
@@ -701,7 +1289,6 @@ class ScreenshotterApp:
             return MAX_SCALE, MAX_SCALE
 
     def _font_base(self, spec):
-        """(family, size in pixels, weight, slant) of any Tk font description, or None."""
         try:
             a = tkfont.Font(root=self.root, font=spec).actual()
             size = a["size"]
@@ -720,7 +1307,6 @@ class ScreenshotterApp:
         return tuple(spec)
 
     def _index_scalables(self):
-        """Remember the original font / line width / widget size of every static item so it can be rescaled."""
         c = self.bg_canvas
         self._ppp = self.root.winfo_fpixels("1p")
         self._scalables = []
@@ -755,8 +1341,6 @@ class ScreenshotterApp:
             self._scalables.append(rec)
 
     def _rescale_items(self):
-        """Apply the current scale to fonts, line widths and widget sizes (positions are scaled by canvas.scale).
-        Fonts / line widths only change when the uniform scale changes, which keeps a one-axis drag cheap."""
         c = self.bg_canvas
         sx, sy, S = self.sx, self.sy, self.scale
         do_fonts = abs(S - self._font_scale_applied) > 1e-4
@@ -791,8 +1375,6 @@ class ScreenshotterApp:
                 pass
 
     def set_scale(self, sx=None, sy=None, fast=False):
-        """Scale the window freely: width and height scale independently and the whole GUI follows.
-        fast=True uses a cheaper background-image resample (used while dragging)."""
         maxx, maxy = self._max_scales()
         sx = self.sx if sx is None else sx
         sy = self.sy if sy is None else sy
@@ -807,8 +1389,8 @@ class ScreenshotterApp:
 
         c.delete("panel_bg")
         c.delete("bar_bg")
-        c.scale("all", 0, 0, kx, ky)        # moves every item to its new position
-        self._rescale_items()               # fonts, line widths, widget sizes
+        c.scale("all", 0, 0, kx, ky)
+        self._rescale_items()
         for sec in self.stack:
             for w in sec.widgets:
                 w.refresh()
@@ -818,7 +1400,7 @@ class ScreenshotterApp:
         self._draw_bar()
         self.render_background(fast=fast)
         self._update_geometry()
-        self._apply_layout([])              # redraws boxes, tabs and arrows at the new size
+        self._apply_layout([])
         self._panels_dirty = False
         self.schedule_save()
 
@@ -829,7 +1411,6 @@ class ScreenshotterApp:
         self._place_grip()
 
     def _place_grip(self):
-        """Little diagonal grip marks in the bottom-right corner (the resize handle)."""
         c = self.bg_canvas
         c.delete("grip")
         S = self.scale
@@ -841,7 +1422,6 @@ class ScreenshotterApp:
         c.tag_raise("grip")
 
     def _resize_zone(self, x, y):
-        """Which resize area (pixel position) is the point in: 'corner', 'right', 'bottom' or None."""
         w, h = WIN_W * self.sx, self.win_h * self.sy
         if x >= w - RESIZE_CORNER and y >= h - RESIZE_CORNER:
             return "corner"
@@ -856,10 +1436,10 @@ class ScreenshotterApp:
         if zone is None:
             return
         self._resizing = zone
-        self._rs_off = (WIN_W * self.sx - event.x, self.win_h * self.sy - event.y)   # cursor-to-edge distance
+        self._rs_off = (WIN_W * self.sx - event.x, self.win_h * self.sy - event.y)
         self._rs_target = None
         self._rs_last = 0.0
-        self._set_timer_resolution(True)     # fine timer so the 6 ms pacing is real
+        self._set_timer_resolution(True)
 
     def resize_drag(self, event):
         if not self._resizing:
@@ -867,7 +1447,6 @@ class ScreenshotterApp:
         tx = (event.x + self._rs_off[0]) / WIN_W
         ty = (event.y + self._rs_off[1]) / self.win_h
         if event.state & 0x4:
-            # Ctrl held: scale proportionally (width and height together, like a uniform zoom)
             if self._resizing == "right":
                 t = tx
             elif self._resizing == "bottom":
@@ -884,7 +1463,6 @@ class ScreenshotterApp:
             elif self._resizing == "right":
                 ty = None
         self._rs_target = (tx, ty)
-        # Always draw the latest size, paced at RESIZE_INTERVAL_MS (6 ms) between frames
         if self._rs_job is None:
             wait = max(1, int(RESIZE_INTERVAL_MS - (time.perf_counter() - self._rs_last) * 1000.0))
             self._rs_job = self.root.after(wait, self._resize_apply)
@@ -906,12 +1484,11 @@ class ScreenshotterApp:
         t, self._rs_target = self._rs_target, None
         if t is not None:
             self.set_scale(t[0], t[1])
-        self.render_background()             # full-quality background after the fast drag frames
+        self.render_background()
         self._set_timer_resolution(False)
 
     # ---------- Collapsible boxes ----------
     def _header_at(self, x, y):
-        """Return the box whose header (top 28 px, layout units) is at this point, if any."""
         for s in self.stack:
             if (s.panel and s.h >= 30 and s.top <= y <= s.top + 27
                     and PANEL_X1 + s.x <= x <= PANEL_X2 + s.x):
@@ -924,7 +1501,6 @@ class ScreenshotterApp:
             self.toggle_section(s)
 
     def _tab_at(self, x, y):
-        """Return 'main' / 'prefs' if the point (layout units) is over a tab, else None."""
         if not (TAB_Y - 14 <= y <= TAB_Y + 16):
             return None
         for key, _, x0, x1 in self.tab_defs:
@@ -938,7 +1514,6 @@ class ScreenshotterApp:
             self.goto_page(key)
 
     def _update_tabs(self):
-        """Slide the underline between the tabs and highlight the active one."""
         sx, sy = self.sx, self.sy
         n = len(self.tab_defs)
         pos = min(max(self.page_pos, 0.0), n - 1.0)
@@ -954,14 +1529,12 @@ class ScreenshotterApp:
             self.bg_canvas.itemconfigure(self.tab_texts[key], fill=TEXT_LIGHT if idx == active else TEXT_MUTED)
 
     def _blend_colour(self, colour, a):
-        """Colour blended toward the window background (a=1 unchanged, a=0 fully background)."""
         r, g, b = self.root.winfo_rgb(colour)
         r, g, b = r >> 8, g >> 8, b >> 8
         return "#{:02x}{:02x}{:02x}".format(
             int(18 + (r - 18) * a), int(18 + (g - 18) * a), int(31 + (b - 31) * a))
 
     def _take_snapshot(self):
-        """Remember the true colours of every item (and widget) on the two sliding pages."""
         c = self.bg_canvas
         snap = {p: [] for p in PAGES}
         for s in self.stack:
@@ -1016,10 +1589,8 @@ class ScreenshotterApp:
                 pass
 
     def _update_fade(self):
-        """Fade pages out as they slide away and in as they arrive, so pages never overlap visibly."""
         pg = self.page_pos
         if not self._page_anim and float(pg).is_integer():
-            # Settled: put the true colours back and stop fading
             if self._snap is not None:
                 for page in PAGES:
                     self._apply_colours(self._snap[page], 1.0)
@@ -1038,7 +1609,6 @@ class ScreenshotterApp:
                 self._apply_colours(self._snap[page], q)
 
     def goto_page(self, page):
-        """Switch pages: both pages slide sideways together."""
         if page == self.page:
             return
         self.page = page
@@ -1055,7 +1625,6 @@ class ScreenshotterApp:
         s.target = 0.0 if s.target > 0.5 else 1.0
         s.anim_from = s.p
         s.anim_to = s.target
-        # Same speed even if the click interrupts a half-finished animation
         s.anim_dur = max(0.05, (SECTION_ANIM_MS / 1000.0) * abs(s.anim_to - s.anim_from))
         s.anim_start = time.perf_counter()
         s.animating = True
@@ -1064,7 +1633,6 @@ class ScreenshotterApp:
             self._anim_tick()
 
     def _set_timer_resolution(self, on):
-        """Finer Windows timer resolution so a 6 ms timer really fires every ~6 ms (reference counted)."""
         if os.name != "nt":
             return
         try:
@@ -1113,7 +1681,6 @@ class ScreenshotterApp:
             self._apply_layout(changed)
 
         if still_running:
-            # Subtract the time this frame took so the cadence stays near the target interval
             work_ms = (time.perf_counter() - t0) * 1000.0
             delay = max(1, int(SECTION_ANIM_INTERVAL_MS - work_ms))
             self._anim_job = self.root.after(delay, self._anim_tick)
@@ -1126,7 +1693,6 @@ class ScreenshotterApp:
         pg = self.page_pos
         sx, sy = self.sx, self.sy
 
-        # Stack each page's own boxes from the top
         tops = {}
         ends = {}
         for page in PAGES:
@@ -1139,7 +1705,6 @@ class ScreenshotterApp:
                     y += s.h
             ends[page] = y
 
-        # Shared boxes (buttons, status) sit under the page that is showing and glide between page heights
         pos = min(max(pg, 0.0), len(PAGES) - 1.0)
         i = min(int(pos), len(PAGES) - 2)
         frac = pos - i
@@ -1151,13 +1716,11 @@ class ScreenshotterApp:
                 tops[s.key] = int(round(y))
                 y += s.h
 
-        # Resize the window so there is no empty space at the bottom
         new_h = int(round(y)) + WIN_BOTTOM_PAD
         if new_h != self.win_h:
             self.win_h = new_h
             self._update_geometry()
 
-        # Slide the pages sideways and move everything to its new row
         for s in self.stack:
             if s.page == "both":
                 nx = 0
@@ -1183,7 +1746,6 @@ class ScreenshotterApp:
         self.draw_panels()
 
     def _update_visibility(self, s):
-        """Hide the controls that no longer fit inside a box that is closing/opening."""
         c = self.bg_canvas
         for rec in s.items:
             vis = rec[1] <= s.h - rec[3]
@@ -1195,7 +1757,6 @@ class ScreenshotterApp:
             w.set_visible((w.cur_y() - s.top) + 18 <= wlimit)
 
     def _update_chevron(self, s):
-        """Draw the arrow: 'V' when open, rotating to '>' when closed."""
         if s.chevron is None:
             return
         sx, sy, S = self.sx, self.sy, self.scale
@@ -1208,7 +1769,6 @@ class ScreenshotterApp:
         self.bg_canvas.coords(s.chevron, *pts)
 
     def _index_sections(self):
-        """Remember the (relative) bottom edge of every plain item so it can be hidden when it doesn't fit."""
         c = self.bg_canvas
         for s in self.stack:
             if not s.panel:
@@ -1220,7 +1780,7 @@ class ScreenshotterApp:
                     if bb:
                         s.items.append([item, bb[3] - s.top, True, margin])
 
-    # ---------- Panel backgrounds (cheap to redraw at high frame rates) ----------
+    # ---------- Panel backgrounds ----------
     def _mid_tile(self, w, mh, a, ba, fill, border):
         key = ("mid", w, mh, a, ba, fill, border)
         img = self.panel_cache.get(key)
@@ -1234,14 +1794,12 @@ class ScreenshotterApp:
         return img
 
     def _panel_parts(self, w, h, radius, alpha, fade=1.0):
-        """Split a box background into a top cap, reusable middle tiles and a bottom cap.
-        w, h and radius are layout units; the images are built at the current width / height scale."""
         sx, sy, S = self.sx, self.sy, self.scale
         wp = max(1, int(round(w * sx)))
         hp = max(2, int(round(h * sy)))
         tile = max(1, int(round(TILE_H * sy)))
-        a = int(255 * alpha * fade)      # fill opacity (box opacity x page fade)
-        ba = int(255 * fade)             # border opacity (page fade)
+        a = int(255 * alpha * fade)
+        ba = int(255 * fade)
         fill = self._rgb(self.box_colour_var, DEFAULT_BOX_COLOUR)
         border = self._rgb(self.border_colour_var, DEFAULT_BORDER_COLOUR)
         r = max(0, min(int(round(radius * S)), hp // 2, wp // 2))
@@ -1296,20 +1854,18 @@ class ScreenshotterApp:
                 c.create_image(left, top + off, image=img, anchor="nw", tags="panel_bg")
 
         if reorder:
-            # Boxes sit above the lines but below the title bar and all text/widgets
             c.tag_lower("panel_bg")
             c.tag_lower("net")
             c.tag_lower("bg_img")
 
     # ---------- Custom title bar ----------
     def show_in_taskbar(self):
-        """Borderless windows are hidden from the taskbar by default on Windows; undo that."""
         if os.name != "nt":
             return
         try:
             hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
             style = ctypes.windll.user32.GetWindowLongW(hwnd, -20)
-            style = (style & ~0x00000080) | 0x00040000  # remove TOOLWINDOW, add APPWINDOW
+            style = (style & ~0x00000080) | 0x00040000
             ctypes.windll.user32.SetWindowLongW(hwnd, -20, style)
             self.root.withdraw()
             self.root.after(10, self.root.deiconify)
@@ -1348,7 +1904,6 @@ class ScreenshotterApp:
                 self._drag_dy = event.y_root - self.root.winfo_y()
 
     def _start_native_drag(self):
-        """High-rate drag: the window eases toward the cursor and is moved with SetWindowPos."""
         user32 = ctypes.windll.user32
         user32.GetParent.restype = wt.HWND
         user32.GetParent.argtypes = [wt.HWND]
@@ -1364,14 +1919,13 @@ class ScreenshotterApp:
 
         self._drag_hwnd = hwnd
         self._drag_off = (pt.x - rect.left, pt.y - rect.top)
-        self._pos = [float(rect.left), float(rect.top)]      # smoothed position
-        self._target = (float(rect.left), float(rect.top))   # where the cursor wants the window
+        self._pos = [float(rect.left), float(rect.top)]
+        self._target = (float(rect.left), float(rect.top))
         self._last_pos = (rect.left, rect.top)
         self._last_t = time.perf_counter()
         self._released = False
         self._native_drag = True
 
-        # Finer Windows timer resolution so the 6 ms timer actually fires that fast
         try:
             ctypes.windll.winmm.timeBeginPeriod(1)
         except Exception:
@@ -1388,7 +1942,6 @@ class ScreenshotterApp:
         dt = min(now - self._last_t, 0.05)
         self._last_t = now
 
-        # Track the cursor while the button is held; after release, keep gliding to the last target
         if not self._released:
             if not (user32.GetAsyncKeyState(0x01) & 0x8000):
                 self._released = True
@@ -1397,7 +1950,6 @@ class ScreenshotterApp:
                 user32.GetCursorPos(ctypes.byref(pt))
                 self._target = (pt.x - self._drag_off[0], pt.y - self._drag_off[1])
 
-        # Frame-rate independent exponential easing toward the target
         k = 1.0 - math.exp(-DRAG_SMOOTHING * dt)
         self._pos[0] += (self._target[0] - self._pos[0]) * k
         self._pos[1] += (self._target[1] - self._pos[1]) * k
@@ -1409,7 +1961,6 @@ class ScreenshotterApp:
 
         nx, ny = int(round(self._pos[0])), int(round(self._pos[1]))
         if (nx, ny) != self._last_pos:
-            # SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
             user32.SetWindowPos(self._drag_hwnd, None, nx, ny, 0, 0, 0x0001 | 0x0004 | 0x0010)
             self._last_pos = (nx, ny)
 
@@ -1430,13 +1981,11 @@ class ScreenshotterApp:
                 pass
 
     def bar_drag(self, event):
-        # Fallback path for non-Windows systems (the native path drives itself via _drag_tick)
         if self._dragging and not self._native_drag:
             self.root.geometry(f"+{event.x_root - self._drag_dx}+{event.y_root - self._drag_dy}")
 
     def bar_release(self, event):
         if self._native_drag:
-            # Let the window finish gliding to the cursor; _drag_tick ends the drag when settled
             self._released = True
         else:
             self._end_drag()
@@ -1451,7 +2000,7 @@ class ScreenshotterApp:
         over_header = (self._header_at(lx, ly) is not None or
                        self._tab_at(lx, ly) is not None or over_button)
         self.bg_canvas.itemconfigure(self.close_txt, fill="#ef4444" if over_close else TEXT_LIGHT)
-        self.bg_canvas.itemconfigure(self.min_txt, fill=ACCENT_BLUE if over_min else TEXT_LIGHT)
+        self.bg_canvas.itemconfigure(self.min_txt, fill=self._accent() if over_min else TEXT_LIGHT)
 
         zone = self._resize_zone(event.x, event.y)
         cursor = {"corner": "size_nw_se", "right": "sb_h_double_arrow",
@@ -1471,7 +2020,6 @@ class ScreenshotterApp:
         return {}
 
     def collect_settings(self):
-        """Every user setting as a plain dict (used for the config file and for Export Settings)."""
         return {
             "dir": self.dir_var.get(),
             "max_shots": self.max_shots_var.get(),
@@ -1493,7 +2041,11 @@ class ScreenshotterApp:
             "line_colour": self.line_colour_var.get(),
             "border_colour": self.border_colour_var.get(),
             "box_colour": self.box_colour_var.get(),
+            "accent_colour": self.accent_colour_var.get(),
             "image_opacity": self.image_opacity_var.get(),
+            "bg_zoom": round(self.bg_view[0], 4),
+            "bg_ox": round(self.bg_view[1], 4),
+            "bg_oy": round(self.bg_view[2], 4),
         }
 
     def save_config(self):
@@ -1507,7 +2059,6 @@ class ScreenshotterApp:
             pass
 
     def schedule_save(self):
-        # Wait until the slider stops moving, then save once
         if self._save_job is not None:
             self.root.after_cancel(self._save_job)
         self._save_job = self.root.after(400, self.save_appearance)
@@ -1544,6 +2095,7 @@ class ScreenshotterApp:
         self.line_colour_var.set(DEFAULT_LINE_COLOUR)
         self.border_colour_var.set(DEFAULT_BORDER_COLOUR)
         self.box_colour_var.set(DEFAULT_BOX_COLOUR)
+        self.accent_colour_var.set(DEFAULT_ACCENT_COLOUR)
         self.image_opacity_var.set(0.5)
         self.clear_background_image()
         self.root.attributes('-alpha', 0.95)
@@ -1571,7 +2123,6 @@ class ScreenshotterApp:
         self.root.attributes('-alpha', float(val))
 
     def update_box_theme(self, val=None):
-        # Background colour for any remaining solid widgets sitting on the panels
         alpha = self.box_opacity_var.get()
         r = int(18 + (32 * alpha))
         g = int(18 + (32 * alpha))
@@ -1618,19 +2169,21 @@ class ScreenshotterApp:
         self._bar_sig = self._bar_signature()
 
     def sync_particles(self, target):
-        """Grow or shrink the particle list to match the target count."""
         while len(self.particles) < target:
             self.particles.append({
                 'x': random.uniform(0, WIN_W),
                 'y': random.uniform(0, self.win_h),
                 'vx': random.uniform(-0.5, 0.5),
-                'vy': random.uniform(-0.5, 0.5)
+                'vy': random.uniform(-0.5, 0.5),
+                # Unique identity used to seed a stable curve for each pair
+                'id': random.getrandbits(32),
+                # Slow sine-wave drift that animates the curve bulge over time
+                'phase': random.uniform(0, math.tau),
             })
         if len(self.particles) > target:
             del self.particles[target:]
 
     def spread_particles(self, repel_radius, f=1.0):
-        """Gently push neighbouring dots apart so they distribute evenly instead of clumping."""
         n = len(self.particles)
         for i in range(n):
             p1 = self.particles[i]
@@ -1657,13 +2210,12 @@ class ScreenshotterApp:
         dt = min(t0 - self._bg_last, 0.1)
         self._bg_last = t0
 
-        # Skip the heavy redraw while dragging / resizing / opening / closing boxes so those stay smooth
-        if (PAUSE_ANIM_WHILE_DRAGGING and (self._dragging or self._resizing)) or \
+        if self._dialog_open or \
+           (PAUSE_ANIM_WHILE_DRAGGING and (self._dragging or self._resizing)) or \
            (PAUSE_BG_WHILE_SECTION_ANIM and self._anim_job is not None):
             self.root.after(BG_FRAME_MS, self.animate_background)
             return
 
-        # Movement was tuned for 25 ms frames; scale by real elapsed time so the speed stays the same at 6 ms
         f = min(dt / 0.025, 3.0)
 
         sx, sy, S = self.sx, self.sy, self.scale
@@ -1672,7 +2224,6 @@ class ScreenshotterApp:
         max_lines = min(MAX_LINES_LIMIT, int(self.line_count_var.get()))
         spread = self.spread_var.get()
 
-        # Spread controls dot repulsion and how far a line can reach
         repel_radius = spread * 110
         link_max = 100 + spread * 140
 
@@ -1684,14 +2235,12 @@ class ScreenshotterApp:
             c = self.bg_canvas
             c.delete("net")
 
-            # Line colour: the chosen colour blended with the background by the line opacity slider
             base = self._rgb(self.line_colour_var, DEFAULT_LINE_COLOUR)
             lr = int(18 + (base[0] - 18) * line_alpha)
             lg = int(18 + (base[1] - 18) * line_alpha)
             lb = int(31 + (base[2] - 31) * line_alpha)
             line_color = f"#{lr:02x}{lg:02x}{lb:02x}"
 
-            # Enough dots so the requested number of lines can actually be reached
             target_particles = int(5 * math.sqrt(max_lines)) if max_lines > 0 else 0
             self.sync_particles(target_particles)
 
@@ -1701,9 +2250,10 @@ class ScreenshotterApp:
                     p['y'] += p['vy'] * speed_multiplier * f
                     if p['x'] < 0 or p['x'] > WIN_W: p['vx'] *= -1
                     if p['y'] < 0 or p['y'] > self.win_h: p['vy'] *= -1
-                    # Keep dots inside the window (it shrinks when boxes close)
                     p['x'] = min(max(p['x'], 0), WIN_W)
                     p['y'] = min(max(p['y'], 0), self.win_h)
+                    # Slowly advance phase so each line's curve gently breathes
+                    p['phase'] = (p.get('phase', 0) + 0.008 * speed_multiplier * f) % math.tau
 
                 if repel_radius > 0:
                     self.spread_particles(repel_radius, f)
@@ -1719,21 +2269,52 @@ class ScreenshotterApp:
                         if dist < link_max:
                             links.append((dist, p1, p2))
 
-                # Cap to the slider value, keeping the closest (strongest) links
                 if len(links) > max_lines:
                     links.sort(key=lambda l: l[0])
                     links = links[:max_lines]
 
+                now_t = t0  # current time for animating the curve bulge
                 for _, p1, p2 in links:
-                    mid_x = (p1['x'] + p2['x']) / 2 + (p2['y'] - p1['y']) * 0.05
-                    mid_y = (p1['y'] + p2['y']) / 2 + (p1['x'] - p2['x']) * 0.05
+                    ax, ay = p1['x'], p1['y']
+                    bx, by = p2['x'], p2['y']
+                    dx, dy = bx - ax, by - ay
+                    dist_ab = math.hypot(dx, dy)
+                    if dist_ab < 1:
+                        continue
+
+                    # Perpendicular unit vector
+                    px_u, py_u = -dy / dist_ab, dx / dist_ab
+
+                    # Each pair gets a stable curve direction from their id XOR
+                    seed = p1.get('id', 0) ^ p2.get('id', 0)
+                    sign = 1 if seed & 1 else -1
+
+                    # Very gentle bulge: scales with length, capped so lines stay nearly straight
+                    phase1 = p1.get('phase', 0)
+                    phase2 = p2.get('phase', 0)
+                    wave = math.sin(now_t * 0.4 + (phase1 + phase2) * 0.5)
+                    bulge = sign * min(CURVE_MAX, dist_ab * CURVE_AMOUNT * (1.0 + 0.25 * wave))
+
+                    # Single quadratic Bézier control point at the midpoint, pushed sideways.
+                    # The peak deviation from the straight line is bulge / 2.
+                    cpx = (ax + bx) / 2 + px_u * bulge
+                    cpy = (ay + by) / 2 + py_u * bulge
+
+                    # Sample the curve (no smooth=True needed, so no extra wobble)
+                    pts = []
+                    for step in range(CURVE_STEPS + 1):
+                        t = step / CURVE_STEPS
+                        mt = 1.0 - t
+                        bpx = mt * mt * ax + 2 * mt * t * cpx + t * t * bx
+                        bpy = mt * mt * ay + 2 * mt * t * cpy + t * t * by
+                        pts += [bpx * sx, bpy * sy]
+
                     c.create_line(
-                        p1['x'] * sx, p1['y'] * sy, mid_x * sx, mid_y * sy, p2['x'] * sx, p2['y'] * sy,
-                        smooth=True, fill=line_color, width=1.5 * S, tags="net"
+                        *pts,
+                        fill=line_color, width=1.5 * S, tags="net",
+                        capstyle="round", joinstyle="round"
                     )
 
-            # The boxes and title bar are only redrawn when something about them changed
-            # (not every frame), which is what makes a 6 ms frame affordable.
             restack = False
             if self._bar_signature() != self._bar_sig:
                 self._draw_bar()
@@ -1743,7 +2324,6 @@ class ScreenshotterApp:
                 self._panels_dirty = False
                 restack = True
 
-            # Stacking order: lines (bottom) < boxes < title bar < text/widgets
             if restack:
                 c.tag_lower("bar_bg")
                 c.tag_lower("panel_bg")
@@ -1754,23 +2334,20 @@ class ScreenshotterApp:
         self.root.after(max(1, int(BG_FRAME_MS - work_ms)), self.animate_background)
 
     def build_ui(self):
-        # One canvas holds everything, so the lines can sit underneath the translucent boxes
         self.bg_canvas = tk.Canvas(self.root, bg=BG_MAIN, highlightthickness=0)
-        self.bg_canvas.ui_scale = (1.0, 1.0)      # read by the drawn sliders / checkboxes (the UI is built at scale 1.0)
+        self.bg_canvas.ui_scale = (1.0, 1.0)
         self.bg_canvas.place(x=0, y=0, relwidth=1, relheight=1)
         c = self.bg_canvas
 
         self.themed_widgets = []
         X1, X2 = PANEL_X1, PANEL_X2
 
-        # --- Vertical stack of boxes (top positions are computed from heights and gaps) ---
         specs = [
-            # key,      title,                          height, gap, panel, page
             ("save",     "SAVE LOCATION (REQUIRED)",     72, 72, True,  "main"),
             ("limits",   "LIMITS & TIMING (REQUIRED)",  156, 10, True,  "main"),
             ("keys",     "CUSTOM KEYBINDS (REQUIRED)",  128, 10, True,  "main"),
             ("prefs",    "PREFERENCES",                 430, 72, True,  "prefs"),
-            ("colours",  "COLOURS",                     128, 10, True,  "prefs"),
+            ("colours",  "COLOURS",                     160, 10, True,  "prefs"),  # +32px for new accent row
             ("presets",  "PRESET THEMES",               182, 72, True,  "themes"),
             ("custom",   "CUSTOM THEMES",               218, 10, True,  "themes"),
             ("buttons",  "",                             36, 18, False, "both"),
@@ -1785,10 +2362,9 @@ class ScreenshotterApp:
         S = {s.key: s for s in self.stack}
 
         def tg(s, content=True):
-            """Tags for an item: moves with its box, and (for plain items) hides when it doesn't fit."""
             return ("ui_text", s.tag, s.ctag) if content else ("ui_text", s.tag)
 
-        # --- Custom title bar (background image is drawn in animate_background) ---
+        # --- Custom title bar ---
         c.create_text(14, BAR_H / 2, text="SCREENSHOTTER", font=("Segoe UI", 10, "bold"),
                       fill=TEXT_LIGHT, anchor="w", tags="ui_text")
         self.min_txt = c.create_text(WIN_W - 54, BAR_H / 2, text="—", font=("Segoe UI", 11),
@@ -1796,7 +2372,7 @@ class ScreenshotterApp:
         self.close_txt = c.create_text(WIN_W - 18, BAR_H / 2, text="✕", font=("Segoe UI", 11),
                                        fill=TEXT_LIGHT, tags="ui_text")
 
-        # --- Page tabs at the very top: Main | Preferences | Themes ---
+        # --- Page tabs ---
         self.tab_defs = [("main", "Main", X1, X1 + 84),
                          ("prefs", "Preferences", X1 + 90, X1 + 220),
                          ("themes", "Themes", X1 + 226, X1 + 316)]
@@ -1811,7 +2387,6 @@ class ScreenshotterApp:
         self._update_tabs()
 
         def make_header(s):
-            """Title text plus the arrow in the top-left corner of the box."""
             c.create_text(X1 + 32, s.top + 16, text=s.title, font=("Segoe UI", 9, "bold"),
                           fill=ACCENT_BLUE, anchor="w", tags=("ui_text", s.tag, s.htag))
             s.chevron = c.create_line(
@@ -1864,39 +2439,37 @@ class ScreenshotterApp:
         s = S["prefs"]
         make_header(s)
 
-        # Canvas-drawn checkbox: no solid widget patch, so lines show through
         self.notify_check = CanvasCheckbox(
             c, X1 + 14, s.top + 40, "Send desktop notifications", self.notify_var,
             TEXT_LIGHT, ("Segoe UI", 9), tags=tg(s, content=False)
         )
         s.widgets.append(self.notify_check)
 
-        def add_slider(cy, label, from_, to, res, var, command=None):
+        def add_slider(s_ref, cy, label, from_, to, res, var, command=None):
             label_id = c.create_text(X1 + 14, cy, text=label, font=("Segoe UI", 9),
-                                     fill=TEXT_LIGHT, anchor="w", tags=tg(s, content=False))
-            # Canvas-drawn slider: only a thin track and small handle, so lines show through
+                                     fill=TEXT_LIGHT, anchor="w", tags=tg(s_ref, content=False))
             slider = CanvasSlider(c, X2 - 14 - 200, X2 - 14, cy, from_, to, res, var, command,
-                                  tags=tg(s, content=False))
+                                  tags=tg(s_ref, content=False))
             slider.extra_items = [label_id]
-            s.widgets.append(slider)
+            s_ref.widgets.append(slider)
             return slider
 
         sy = s.top + 82
-        self.win_opacity_slider = add_slider(sy, "Window Opacity:", 0.4, 1.0, 0.05,
+        self.win_opacity_slider = add_slider(s, sy, "Window Opacity:", 0.4, 1.0, 0.05,
                                              self.opacity_var, self.change_window_opacity)
-        self.bar_opacity_slider = add_slider(sy + 46, "Title Bar Opacity:", 0.0, 1.0, 0.05,
+        self.bar_opacity_slider = add_slider(s, sy + 46, "Title Bar Opacity:", 0.0, 1.0, 0.05,
                                              self.bar_opacity_var)
-        self.box_opacity_slider = add_slider(sy + 92, "Box Opacity:", 0.0, 1.0, 0.05,
+        self.box_opacity_slider = add_slider(s, sy + 92, "Box Opacity:", 0.0, 1.0, 0.05,
                                              self.box_opacity_var, self.update_box_theme)
-        self.line_opacity_slider = add_slider(sy + 138, "Line Opacity:", 0.1, 1.0, 0.05,
+        self.line_opacity_slider = add_slider(s, sy + 138, "Line Opacity:", 0.1, 1.0, 0.05,
                                               self.line_opacity_var)
-        self.box_radius_slider = add_slider(sy + 184, "Box Corner Radius:", 0, 25, 1,
+        self.box_radius_slider = add_slider(s, sy + 184, "Box Corner Radius:", 0, 25, 1,
                                             self.box_radius_var)
-        self.speed_slider = add_slider(sy + 230, "Animation Speed:", 0.2, 2.5, 0.1,
+        self.speed_slider = add_slider(s, sy + 230, "Animation Speed:", 0.2, 2.5, 0.1,
                                        self.anim_speed_var)
-        self.line_count_slider = add_slider(sy + 276, "Line Count (max):", 0, MAX_LINES_LIMIT, 10,
+        self.line_count_slider = add_slider(s, sy + 276, "Line Count (max):", 0, MAX_LINES_LIMIT, 10,
                                             self.line_count_var)
-        self.spread_slider = add_slider(sy + 322, "Line Spread:", 0.0, 1.0, 0.05,
+        self.spread_slider = add_slider(s, sy + 322, "Line Spread:", 0.0, 1.0, 0.05,
                                         self.spread_var)
 
         # --- Colours ---
@@ -1908,22 +2481,25 @@ class ScreenshotterApp:
                           fill=TEXT_LIGHT, anchor="w", tags=tg(s))
             swatch = tk.Button(
                 c, bg=parse_hex(var.get()) or default_val, bd=1, relief="solid", width=3,
-                command=lambda: self.pick_colour(var, label_text.rstrip(":"), default_val))
+                command=lambda v=var, l=label_text, d=default_val: self.pick_colour(v, l.rstrip(":"), d))
             c.create_window(X1 + 190, ry, window=swatch, anchor="w", height=22, tags=tg(s))
             entry = tk.Entry(c, textvariable=var, width=10, bg="#161625", fg=TEXT_LIGHT,
                              insertbackground="white", bd=1, relief="solid")
             c.create_window(X1 + 236, ry, window=entry, anchor="w", tags=tg(s))
             c.create_text(X1 + 340, ry, text=f"Default: {default_val}", font=("Segoe UI", 8),
                           fill=TEXT_MUTED, anchor="w", tags=tg(s))
-            var.trace_add("write", lambda *a: self._refresh_swatch(var, swatch, entry))
+            var.trace_add("write", lambda *a, v=var, sw=swatch, en=entry: self._refresh_swatch(v, sw, en))
             self._refresh_swatch(var, swatch, entry)
             self.colour_widgets += [swatch, entry]
+            return swatch
 
         add_colour_row(s.top + 44, "Line Colour:", self.line_colour_var, DEFAULT_LINE_COLOUR)
         add_colour_row(s.top + 72, "Border Colour:", self.border_colour_var, DEFAULT_BORDER_COLOUR)
         add_colour_row(s.top + 100, "Box Colour:", self.box_colour_var, DEFAULT_BOX_COLOUR)
+        # New accent colour row — controls all the blue UI chrome
+        self.accent_swatch = add_colour_row(s.top + 128, "Accent Colour:", self.accent_colour_var, DEFAULT_ACCENT_COLOUR)
 
-        # --- Preset Themes (canvas-drawn rounded buttons: they glide at full speed when the box opens/closes) ---
+        # --- Preset Themes ---
         s = S["presets"]
         make_header(s)
         for i, (name, theme) in enumerate(PRESET_THEMES):
@@ -1947,17 +2523,17 @@ class ScreenshotterApp:
                 fill=ACCENT_PURPLE, fg=TEXT_LIGHT, border=ACCENT_PURPLE,
                 font=("Segoe UI", 9, "bold"), radius=PRESET_BTN_RADIUS, tags=tg(s))
 
-        self.theme_widgets.append(add_theme_button(X1 + 14, s.top + 52, "Upload Background Image...", self.upload_background))
-        self.theme_widgets.append(add_theme_button(X1 + 252, s.top + 52, "Remove Image", self.remove_background))
-        self.image_opacity_slider = add_slider(s.top + 104, "Image Opacity:", 0.1, 1.0, 0.05,
+        self.theme_widgets.append(add_theme_button(X1 + 14, s.top + 52, "Upload Image...", self.upload_background, w=146))
+        self.theme_widgets.append(add_theme_button(X1 + 171, s.top + 52, "Adjust Image...", self.adjust_background, w=146))
+        self.theme_widgets.append(add_theme_button(X1 + 328, s.top + 52, "Remove Image", self.remove_background, w=146))
+        self.image_opacity_slider = add_slider(s, s.top + 104, "Image Opacity:", 0.1, 1.0, 0.05,
                                                self.image_opacity_var)
         self.theme_widgets.append(add_theme_button(X1 + 14, s.top + 146, "Export Settings...", self.export_settings))
         self.theme_widgets.append(add_theme_button(X1 + 252, s.top + 146, "Import Settings...", self.import_settings))
-        # Not in theme_widgets: it stays usable while hotkeys are armed (resizing is allowed then too)
         self.scale_reset_btn = add_theme_button(X1 + 14, s.top + 188, "Reset Window Size",
                                                 lambda: self.set_scale(1.0, 1.0), w=460)
 
-        # --- Action Buttons (a fixed row: slides with the boxes above, never collapses) ---
+        # --- Action Buttons ---
         s = S["buttons"]
         by = s.top + 18
         self.arm_btn = tk.Button(
@@ -2004,6 +2580,8 @@ class ScreenshotterApp:
         self.line_colour_var.set(theme["line"])
         self.border_colour_var.set(theme["border"])
         self.box_colour_var.set(theme["box"])
+        # Apply the preset's accent colour if it defines one, otherwise use the line colour
+        self.accent_colour_var.set(theme.get("accent", theme["line"]))
         self.status_label.config(text=f"Status: Theme '{name}' applied.", fg=TEXT_MUTED)
 
     def _load_bg_source(self):
@@ -2013,13 +2591,19 @@ class ScreenshotterApp:
             try:
                 img = Image.open(BG_IMAGE_FILE)
                 img.load()
-                self.bg_src = cover_resize(img, WIN_W * BG_SRC_SCALE, BG_IMG_H * BG_SRC_SCALE)
+                self.bg_src = self._limit_bg_size(img.convert("RGB"))
             except Exception:
                 self.bg_src = None
 
+    @staticmethod
+    def _limit_bg_size(img):
+        longest = max(img.size)
+        if longest > BG_MAX_SIDE:
+            k = BG_MAX_SIDE / longest
+            img = img.resize((max(1, int(img.width * k)), max(1, int(img.height * k))), Image.LANCZOS)
+        return img
+
     def render_background(self, fast=False):
-        """Draw the background image (dimmed toward the window colour by Image Opacity) under everything.
-        It is cover-fitted to the current window shape, so it is never stretched."""
         c = self.bg_canvas
         c.delete("bg_img")
         self._bg_photo = None
@@ -2030,30 +2614,79 @@ class ScreenshotterApp:
         except Exception:
             return
         size = (max(1, int(round(WIN_W * self.sx))), max(1, int(round(BG_IMG_H * self.sy))))
-        scaled = cover_resize(self.bg_src, size[0], size[1], Image.NEAREST if fast else Image.BILINEAR)
+        zoom, ox, oy = self.bg_view
+        # The placement is recalculated from the original for the current window shape, so
+        # the image keeps its position / zoom relative to the window and is never stretched.
+        # Anything outside the window is cropped off; gaps show the plain background.
+        x0, y0, dw, dh, _, _ = image_layout(self.bg_src.width, self.bg_src.height,
+                                            size[0], size[1], zoom, ox, oy)
+        frame = Image.new("RGB", size, (18, 18, 31))
+        paste_scaled(frame, self.bg_src, x0, y0, dw, dh,
+                     Image.NEAREST if fast else Image.BILINEAR)
         base = Image.new("RGB", size, (18, 18, 31))
-        self._bg_photo = ImageTk.PhotoImage(Image.blend(base, scaled, a))
+        self._bg_photo = ImageTk.PhotoImage(Image.blend(base, frame, a))
         c.create_image(0, 0, image=self._bg_photo, anchor="nw", tags="bg_img")
         c.tag_lower("bg_img")
 
-    def set_background_image(self, img):
-        self.bg_src = cover_resize(img, WIN_W * BG_SRC_SCALE, BG_IMG_H * BG_SRC_SCALE)
+    def set_background_image(self, img, view=None):
+        self.bg_src = self._limit_bg_size(img.convert("RGB"))
         self._bg_cache = None
+        self.bg_view = clean_view(*view) if view else [1.0, 0.0, 0.0]
         try:
             self.bg_src.save(BG_IMAGE_FILE, "JPEG", quality=90)
         except Exception:
             pass
         self.render_background()
+        self.schedule_save()
+
+    def set_background_view(self, zoom, ox, oy):
+        self.bg_view = clean_view(zoom, ox, oy)
+        self.render_background()
+        self.schedule_save()
 
     def clear_background_image(self):
         self.bg_src = None
         self._bg_cache = None
+        self.bg_view = [1.0, 0.0, 0.0]
         if os.path.exists(BG_IMAGE_FILE):
             try:
                 os.remove(BG_IMAGE_FILE)
             except Exception:
                 pass
         self.render_background()
+
+    def _open_adjust_dialog(self, img, view, on_apply):
+        aspect = (WIN_W * self.sx) / (BG_IMG_H * self.sy)
+        visible_frac = self.win_h / BG_IMG_H
+        style = {
+            "accent": self._accent(),
+            "border": parse_hex(self.border_colour_var.get()) or DEFAULT_BORDER_COLOUR,
+            "box": parse_hex(self.box_colour_var.get()) or DEFAULT_BOX_COLOUR,
+            "box_alpha": self.box_opacity_var.get(),
+            "radius": self.box_radius_var.get(),
+            "bar_alpha": self.bar_opacity_var.get(),
+            "window_alpha": self.opacity_var.get(),
+            "line_colour": parse_hex(self.line_colour_var.get()) or DEFAULT_LINE_COLOUR,
+            "line_alpha": self.line_opacity_var.get(),
+            "line_count": self.line_count_var.get(),
+            "anim_speed": self.anim_speed_var.get(),
+            "spread": self.spread_var.get(),
+        }
+        self._dialog_open = True
+        try:
+            dlg = BackgroundAdjustDialog(self.root, img, aspect, visible_frac,
+                                         self.image_opacity_var.get(), view, on_apply, style)
+        except Exception:
+            self._dialog_open = False
+            raise
+
+        def _closed(event, d=dlg):
+            if event.widget is d:
+                self._dialog_open = False
+                self._last_t = time.perf_counter()
+                self._bg_last = time.perf_counter()
+
+        dlg.bind("<Destroy>", _closed, add="+")
 
     def upload_background(self):
         path = filedialog.askopenfilename(
@@ -2064,10 +2697,28 @@ class ScreenshotterApp:
         try:
             img = Image.open(path)
             img.load()
-            self.set_background_image(img)
-            self.status_label.config(text=f"Status: Background set to {os.path.basename(path)}.", fg=TEXT_MUTED)
         except Exception as e:
             messagebox.showerror("Image Error", f"Could not open that image:\n{e}")
+            return
+
+        name = os.path.basename(path)
+
+        def apply(zoom, ox, oy):
+            self.set_background_image(img, view=(zoom, ox, oy))
+            self.status_label.config(text=f"Status: Background set to {name}.", fg=TEXT_MUTED)
+
+        self._open_adjust_dialog(img, (1.0, 0.0, 0.0), apply)
+
+    def adjust_background(self):
+        if self.bg_src is None:
+            self.status_label.config(text="Status: Upload a background image first.", fg=TEXT_MUTED)
+            return
+
+        def apply(zoom, ox, oy):
+            self.set_background_view(zoom, ox, oy)
+            self.status_label.config(text="Status: Background image adjusted.", fg=TEXT_MUTED)
+
+        self._open_adjust_dialog(self.bg_src, self.bg_view, apply)
 
     def remove_background(self):
         self.clear_background_image()
@@ -2115,7 +2766,8 @@ class ScreenshotterApp:
             blob = data["background_image"]
             if blob:
                 try:
-                    self.set_background_image(Image.open(io.BytesIO(base64.b64decode(blob))))
+                    self.set_background_image(Image.open(io.BytesIO(base64.b64decode(blob))),
+                                              view=self.bg_view)
                 except Exception:
                     messagebox.showwarning("Import", "The settings loaded, but the embedded image could not be read.")
             else:
@@ -2136,7 +2788,6 @@ class ScreenshotterApp:
             entry.is_default = True
 
     def apply_settings(self, cfg):
-        """Load a settings dict (from an exported file) into the UI. Unknown / bad values are skipped."""
         ranges = {
             "opacity": (self.opacity_var, 0.4, 1.0), "bar_opacity": (self.bar_opacity_var, 0.0, 1.0),
             "box_opacity": (self.box_opacity_var, 0.0, 1.0), "line_opacity": (self.line_opacity_var, 0.1, 1.0),
@@ -2153,7 +2804,7 @@ class ScreenshotterApp:
         if "notifications" in cfg:
             self.notify_var.set(bool(cfg["notifications"]))
         for key, var in (("line_colour", self.line_colour_var), ("border_colour", self.border_colour_var),
-                         ("box_colour", self.box_colour_var)):
+                         ("box_colour", self.box_colour_var), ("accent_colour", self.accent_colour_var)):
             ok = parse_hex(cfg.get(key, ""))
             if ok:
                 var.set(ok)
@@ -2169,6 +2820,14 @@ class ScreenshotterApp:
                 ("quit_key", self.quit_entry, self.quit_key_var, "'")):
             if key in cfg:
                 self._set_field(entry, var, default, cfg[key])
+        if any(k in cfg for k in ("bg_zoom", "bg_ox", "bg_oy")):
+            try:
+                self.bg_view = clean_view(cfg.get("bg_zoom", self.bg_view[0]),
+                                          cfg.get("bg_ox", self.bg_view[1]),
+                                          cfg.get("bg_oy", self.bg_view[2]))
+            except (TypeError, ValueError):
+                pass
+            self.render_background()
         self.root.attributes('-alpha', self.opacity_var.get())
         self.update_box_theme()
 
@@ -2238,7 +2897,6 @@ class ScreenshotterApp:
             messagebox.showerror("Invalid Input", "Delay (Seconds) must be a number greater than 0.")
             return
 
-        # Strip characters Windows doesn't allow in filenames
         clean_name = re.sub(r'[<>:"/\\|?*]', "", raw_fields["Screenshot Name"]).strip(" .")
         if not clean_name:
             messagebox.showerror("Invalid Input", "Screenshot Name contains no usable characters.")
