@@ -25,6 +25,15 @@ Fixed Console version of exe and updated source code for screenshotter.py
 Added screenshotterWGUI.exe, new gui based version of the original screenshotter, more user friendly with themes and more customisation.
 Added screenshotterWGUI.py source file, you can look though this to verify it is safe due to the virus total report giving 4 false positives probably based on what it is importing and looking at keyboard for key binds.
 
+## Previews
+<p float="left">
+  <p align="center"> <img src="https://github.com/user-attachments/assets/870df289-a07e-4ebb-a396-1b3e8313b087" width="515" height="671" />  
+  <p align="center"> <img src="https://github.com/user-attachments/assets/2d8e2ace-a6d0-4e8d-823a-a67922f25855" width="515" height="893" /> 
+  <p align="center"> <img src="https://github.com/user-attachments/assets/c7b8ea32-d181-45df-85d0-ca848b777065" width="515" height="707" />
+  <p align="center"> <img src="https://github.com/user-attachments/assets/5e178ab1-61d1-4ef4-893b-90111d833455" width="435" height="893" />
+</p>
+
+
 ## Virus Total Report No GUI Only Console 
 [![VirusTotal Scan Status](https://img.shields.io/badge/VirusTotal-Scan%20Results-blue)](https://www.virustotal.com/gui/file/3baa99c17d50120996aad94ec689fd9261549663e80052aa9e19689fc9b49358)
   
