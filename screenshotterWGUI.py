@@ -17,7 +17,14 @@ import pyautogui
 from plyer import notification
 from PIL import Image, ImageDraw, ImageTk
 
-CONFIG_FILE = "screenshot_config.json"
+# Files live next to this script (not the current working directory), so the app finds its
+# saved state no matter where it is launched from.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(BASE_DIR, "screenshot_config.json")
+BG_IMAGE_FILE = os.path.join(BASE_DIR, "screenshot_background.jpg")
+# Older versions saved into the current working directory; still read from there if needed.
+LEGACY_CONFIG_FILE = "screenshot_config.json"
+LEGACY_BG_IMAGE_FILE = "screenshot_background.jpg"
 
 WIN_W = 520
 WIN_H = 674
@@ -41,7 +48,10 @@ PANEL_X1 = 16
 PANEL_X2 = 504
 SECTION_HEADER_H = 36
 SECTION_ANIM_MS = 700
-SECTION_ANIM_INTERVAL_MS = 6
+SECTION_ANIM_INTERVAL_MS = 4   # frame target for page / section animation (4 ms = up to 250 fps)
+PAGE_FADE = True               # per-frame colour fade between pages (prettier but slower)
+PAGE_ANIM_RESIZE_WINDOW = True   # True = the window height glides during a page slide; False = height steps once at each end
+PAGE_RESIZE_MS = 16              # minimum time between height updates while gliding (16 ms = ~60 per second)
 PAUSE_BG_WHILE_SECTION_ANIM = True
 WIN_BOTTOM_PAD = 30
 TILE_H = 32
@@ -60,15 +70,10 @@ DEFAULT_BOX_COLOUR = "#323256"
 DEFAULT_ACCENT_COLOUR = "#3b82f6"
 
 PAGES = ("main", "prefs", "themes")
-BG_IMAGE_FILE = "screenshot_background.jpg"
 BG_IMG_H = 1000
 BG_MAX_SIDE = 2600   # longest side of the stored background image
 BG_MAX_ZOOM = 5.0
 BG_MIN_ZOOM = 0.1    # below 1.0 the image is smaller than the window (gaps show)
-APPEARANCE_KEYS = ("notifications", "opacity", "bar_opacity", "box_opacity", "line_opacity",
-                   "box_radius", "anim_speed", "line_count", "spread",
-                   "line_colour", "border_colour", "box_colour", "image_opacity", "window_scale",
-                   "accent_colour", "bg_zoom", "bg_ox", "bg_oy")
 
 PRESET_BTN_RADIUS = 7
 
@@ -83,10 +88,16 @@ PRESET_THEMES = [
     ("Mono",      {"line": "#e5e7eb", "border": "#9ca3af", "box": "#2b2b2b", "accent": "#9ca3af"}),
 ]
 
-PAGE_ANIM_MS = 700
-FADE_STEPS = 20
+PAGE_ANIM_MS = 1200   # length of a full page slide (Main <-> Preferences <-> Themes)
+FADE_STEPS = 12
 BG_FRAME_MS = 6
 TAB_Y = 48
+
+# Low quality mode (Preferences): cheaper animation for slow PCs
+LOW_FRAME_MS = 33        # ~30 fps background
+LOW_MAX_LINES = 25       # cap on animated lines
+LOW_CURVE_STEPS = 4      # points per line (nearly straight)
+LOW_RESIZE_MS = 40
 
 # Background line curvature
 CURVE_AMOUNT = 0.06   # bulge as a fraction of line length (lower = straighter)
@@ -305,6 +316,8 @@ class CanvasButton:
             self.command()
 
     def _on_motion(self, event):
+        if getattr(self.canvas, "busy", False):
+            return
         h = self.enabled and self.hit(event.x, event.y)
         if h != self.hovered:
             self.hovered = h
@@ -716,6 +729,10 @@ class BackgroundAdjustDialog(tk.Toplevel):
     def _init_net(self):
         st = self.st
         self.max_lines = min(MAX_LINES_LIMIT, int(st["line_count"]))
+        self.low = bool(st.get("low_quality"))
+        if self.low:
+            self.max_lines = min(self.max_lines, LOW_MAX_LINES)
+        self.steps = LOW_CURVE_STEPS if self.low else CURVE_STEPS
         n = int(5 * math.sqrt(self.max_lines)) if self.max_lines > 0 else 0
         self.particles = [{
             "x": random.uniform(0, self.D_W), "y": random.uniform(0, self.D_H),
@@ -735,7 +752,7 @@ class BackgroundAdjustDialog(tk.Toplevel):
         f = min(dt / 0.025, 3.0)
         speed = st["anim_speed"]
         spread = st["spread"]
-        repel = spread * 110
+        repel = 0.0 if self.low else spread * 110
         link_max = 100 + spread * 140
 
         ease = 1.0 - (1.0 - min(0.1 * speed, 0.99)) ** f
@@ -800,8 +817,8 @@ class BackgroundAdjustDialog(tk.Toplevel):
             cpx = (ax + bx) / 2 + pxu * bulge
             cpy = (ay + by) / 2 + pyu * bulge
             pts = []
-            for s in range(CURVE_STEPS + 1):
-                t = s / CURVE_STEPS
+            for s in range(self.steps + 1):
+                t = s / self.steps
                 mt = 1.0 - t
                 pts += [mt * mt * ax + 2 * mt * t * cpx + t * t * bx,
                         mt * mt * ay + 2 * mt * t * cpy + t * t * by]
@@ -819,7 +836,8 @@ class BackgroundAdjustDialog(tk.Toplevel):
             if self._win_drag is None and self._drag is None:
                 self._draw_net(t0, dt)
             work_ms = (time.perf_counter() - t0) * 1000.0
-            self._tick_job = self.after(max(4, int(BG_FRAME_MS - work_ms)), self._tick)
+            frame_ms = LOW_FRAME_MS if self.low else BG_FRAME_MS
+            self._tick_job = self.after(max(4, int(frame_ms - work_ms)), self._tick)
         except tk.TclError:
             pass
 
@@ -1103,6 +1121,7 @@ class ScreenshotterApp:
         self.page_start = 0.0
         self.stack = []
         self.win_h = WIN_H
+        self._h_last = 0.0
         self._anim_job = None
         self._timer_res_on = False
         self._dialog_open = False
@@ -1114,9 +1133,18 @@ class ScreenshotterApp:
 
         self.particles = []
         self.panel_cache = {}
+        self._panel_items = {}
         self.bar_cache = {}
+        self._blend_cache = {}
 
         saved_config = self.load_config()
+
+        # Restore the window position and the page that was open last time
+        self._restore_position(saved_config)
+        saved_page = saved_config.get("page")
+        if saved_page in PAGES:
+            self.page = saved_page
+            self.page_pos = float(PAGES.index(saved_page))
 
         self.dir_var = tk.StringVar(value=saved_config.get("dir", ""))
         self.max_shots_var = tk.StringVar(value=saved_config.get("max_shots", ""))
@@ -1127,6 +1155,7 @@ class ScreenshotterApp:
         self.single_key_var = tk.StringVar(value=saved_config.get("single_key", ""))
         self.quit_key_var = tk.StringVar(value=saved_config.get("quit_key", ""))
         self.notify_var = tk.BooleanVar(value=saved_config.get("notifications", True))
+        self.low_quality_var = tk.BooleanVar(value=bool(saved_config.get("low_quality", False)))
         self.opacity_var = tk.DoubleVar(value=saved_config.get("opacity", 0.95))
         self.box_opacity_var = tk.DoubleVar(value=saved_config.get("box_opacity", 0.4))
         self.line_opacity_var = tk.DoubleVar(value=saved_config.get("line_opacity", 0.8))
@@ -1143,6 +1172,7 @@ class ScreenshotterApp:
         self.accent_colour_var = tk.StringVar(value=saved_config.get("accent_colour", DEFAULT_ACCENT_COLOUR))
         self.colour_widgets = []
         self.theme_widgets = []
+        self.backup_widgets = []
         self.image_opacity_var = tk.DoubleVar(value=saved_config.get("image_opacity", 0.5))
         try:
             self.bg_view = clean_view(saved_config.get("bg_zoom", 1.0),
@@ -1172,13 +1202,23 @@ class ScreenshotterApp:
         self.render_background()
         self.image_opacity_var.trace_add("write", lambda *a: self.render_background())
 
+        # Restore which boxes were collapsed last time
+        collapsed = saved_config.get("collapsed", [])
+        if isinstance(collapsed, list):
+            for s in self.stack:
+                if s.panel and s.key in collapsed:
+                    s.p = s.target = 0.0
+
         self._apply_layout(self.stack)
 
+        # Everything the user can change is saved automatically a moment after it changes
         for var in (self.opacity_var, self.bar_opacity_var, self.box_opacity_var,
                     self.line_opacity_var, self.box_radius_var, self.anim_speed_var,
                     self.line_count_var, self.spread_var, self.notify_var,
                     self.line_colour_var, self.border_colour_var, self.box_colour_var,
-                    self.image_opacity_var, self.accent_colour_var):
+                    self.image_opacity_var, self.accent_colour_var, self.low_quality_var,
+                    self.dir_var, self.max_shots_var, self.max_mb_var, self.delay_var,
+                    self.name_var, self.toggle_key_var, self.single_key_var, self.quit_key_var):
             var.trace_add("write", lambda *a: self.schedule_save())
 
         for var in (self.box_opacity_var, self.box_radius_var,
@@ -1187,6 +1227,7 @@ class ScreenshotterApp:
 
         # Live-update all accent-coloured canvas items when accent colour changes
         self.accent_colour_var.trace_add("write", lambda *a: self._apply_accent_colour())
+        self.low_quality_var.trace_add("write", lambda *a: self._on_quality_change())
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
@@ -1221,6 +1262,16 @@ class ScreenshotterApp:
     @property
     def scale(self):
         return min(self.sx, self.sy)
+
+    def _on_quality_change(self):
+        """Called when the Low quality checkbox is toggled."""
+        on = self.low_quality_var.get()
+        try:
+            self.render_background()
+            self.status_label.config(
+                text="Status: Low quality mode " + ("on." if on else "off."), fg=TEXT_MUTED)
+        except Exception:
+            pass
 
     def _accent(self):
         """Current accent colour, falling back to the default blue."""
@@ -1388,6 +1439,7 @@ class ScreenshotterApp:
         c.ui_scale = (sx, sy)
 
         c.delete("panel_bg")
+        self._panel_items.clear()
         c.delete("bar_bg")
         c.scale("all", 0, 0, kx, ky)
         self._rescale_items()
@@ -1464,7 +1516,8 @@ class ScreenshotterApp:
                 ty = None
         self._rs_target = (tx, ty)
         if self._rs_job is None:
-            wait = max(1, int(RESIZE_INTERVAL_MS - (time.perf_counter() - self._rs_last) * 1000.0))
+            interval = LOW_RESIZE_MS if self.low_quality_var.get() else RESIZE_INTERVAL_MS
+            wait = max(1, int(interval - (time.perf_counter() - self._rs_last) * 1000.0))
             self._rs_job = self.root.after(wait, self._resize_apply)
 
     def _resize_apply(self):
@@ -1529,16 +1582,24 @@ class ScreenshotterApp:
             self.bg_canvas.itemconfigure(self.tab_texts[key], fill=TEXT_LIGHT if idx == active else TEXT_MUTED)
 
     def _blend_colour(self, colour, a):
+        key = (colour, a)
+        hit = self._blend_cache.get(key)
+        if hit is not None:
+            return hit
         r, g, b = self.root.winfo_rgb(colour)
         r, g, b = r >> 8, g >> 8, b >> 8
-        return "#{:02x}{:02x}{:02x}".format(
+        out = "#{:02x}{:02x}{:02x}".format(
             int(18 + (r - 18) * a), int(18 + (g - 18) * a), int(31 + (b - 31) * a))
+        if len(self._blend_cache) > 5000:
+            self._blend_cache.clear()
+        self._blend_cache[key] = out
+        return out
 
-    def _take_snapshot(self):
+    def _take_snapshot(self, page):
         c = self.bg_canvas
-        snap = {p: [] for p in PAGES}
+        snap = {page: []}
         for s in self.stack:
-            if s.page not in snap:
+            if s.page != page:
                 continue
             for item in c.find_withtag(s.tag):
                 kind = c.type(item)
@@ -1574,7 +1635,7 @@ class ScreenshotterApp:
                         vals[o] = v
                 if vals:
                     snap[s.page].append(("item", item, vals))
-        return snap
+        return snap[page]
 
     def _apply_colours(self, entries, a):
         c = self.bg_canvas
@@ -1589,22 +1650,29 @@ class ScreenshotterApp:
                 pass
 
     def _update_fade(self):
+        if not PAGE_FADE:
+            return
         pg = self.page_pos
         if not self._page_anim and float(pg).is_integer():
             if self._snap is not None:
-                for page in PAGES:
-                    self._apply_colours(self._snap[page], 1.0)
+                for page, entries in self._snap.items():
+                    self._apply_colours(entries, 1.0)
                 self._snap = None
             self._fade_q = {p: 1.0 for p in PAGES}
             return
 
         if self._snap is None:
-            self._snap = self._take_snapshot()
+            self._snap = {}
 
         for idx, page in enumerate(PAGES):
+            # A page that is a full page away and was never touched is not on screen: leave it alone
+            if abs(pg - idx) >= 1.0 and page not in self._snap:
+                continue
             a = smoothstep(1.0 - 2.0 * abs(pg - idx))
             q = round(a * FADE_STEPS) / FADE_STEPS
             if q != self._fade_q.get(page):
+                if page not in self._snap:
+                    self._snap[page] = self._take_snapshot(page)
                 self._fade_q[page] = q
                 self._apply_colours(self._snap[page], q)
 
@@ -1612,6 +1680,12 @@ class ScreenshotterApp:
         if page == self.page:
             return
         self.page = page
+        self.schedule_save()
+        if self.low_quality_var.get():
+            self._page_anim = False
+            self.page_pos = float(PAGES.index(page))
+            self._apply_layout([])
+            return
         self.page_from = self.page_pos
         self.page_to = float(PAGES.index(page))
         self.page_dur = max(0.05, (PAGE_ANIM_MS / 1000.0) * min(abs(self.page_to - self.page_from), 1.6))
@@ -1623,6 +1697,12 @@ class ScreenshotterApp:
 
     def toggle_section(self, s):
         s.target = 0.0 if s.target > 0.5 else 1.0
+        self.schedule_save()
+        if self.low_quality_var.get():
+            s.p = s.target
+            s.animating = False
+            self._apply_layout([s])
+            return
         s.anim_from = s.p
         s.anim_to = s.target
         s.anim_dur = max(0.05, (SECTION_ANIM_MS / 1000.0) * abs(s.anim_to - s.anim_from))
@@ -1647,6 +1727,7 @@ class ScreenshotterApp:
 
     def _anim_tick(self):
         t0 = time.perf_counter()
+        self.bg_canvas.busy = True
         changed = []
         still_running = False
 
@@ -1679,6 +1760,7 @@ class ScreenshotterApp:
 
         if changed or page_moved:
             self._apply_layout(changed)
+            self.bg_canvas.update_idletasks()
 
         if still_running:
             work_ms = (time.perf_counter() - t0) * 1000.0
@@ -1686,6 +1768,7 @@ class ScreenshotterApp:
             self._anim_job = self.root.after(delay, self._anim_tick)
         else:
             self._anim_job = None
+            self.bg_canvas.busy = False
             self._set_timer_resolution(False)
 
     def _apply_layout(self, changed):
@@ -1709,14 +1792,31 @@ class ScreenshotterApp:
         i = min(int(pos), len(PAGES) - 2)
         frac = pos - i
         y = ends[PAGES[i]] + (ends[PAGES[i + 1]] - ends[PAGES[i]]) * frac
+        y_base = y
         for s in self.stack:
             if s.page == "both":
                 y += s.gap
                 s.h = s.height()
                 tops[s.key] = int(round(y))
                 y += s.h
+        both_h = y - y_base
 
         new_h = int(round(y)) + WIN_BOTTOM_PAD
+        if self._page_anim and not PAGE_ANIM_RESIZE_WINDOW:
+            # Hold the window at the taller of the pages being slid between, so it is
+            # resized once at each end of the slide instead of every frame
+            lo_i = int(math.floor(min(self.page_from, self.page_to) + 1e-6))
+            hi_i = int(math.ceil(max(self.page_from, self.page_to) - 1e-6))
+            hold = max(ends[PAGES[i]] for i in range(lo_i, hi_i + 1))
+            new_h = int(round(hold + both_h)) + WIN_BOTTOM_PAD
+        elif self._page_anim:
+            # Glide the height with the slide, but only resize ~60 times a second: the page
+            # content still moves every frame, only the (expensive) window resize is limited
+            now = time.perf_counter()
+            if now - self._h_last < PAGE_RESIZE_MS / 1000.0:
+                new_h = self.win_h
+            else:
+                self._h_last = now
         if new_h != self.win_h:
             self.win_h = new_h
             self._update_geometry()
@@ -1728,6 +1828,8 @@ class ScreenshotterApp:
                 nx = int(round((PAGES.index(s.page) - pg) * WIN_W))
             dx = nx - s.x
             dy = tops[s.key] - s.top
+            if self._page_anim and abs(nx) >= WIN_W and abs(s.x) >= WIN_W:
+                continue   # off-screen before and after: skip, it catches up when it moves
             if dx or dy:
                 c.move(s.tag, dx * sx, dy * sy)
             if dx:
@@ -1738,7 +1840,7 @@ class ScreenshotterApp:
 
         for s in changed:
             self._update_visibility(s)
-        for s in self.stack:
+        for s in (changed if self._page_anim else self.stack):
             self._update_chevron(s)
         self._update_tabs()
         self._update_fade()
@@ -1833,27 +1935,53 @@ class ScreenshotterApp:
         return parts
 
     def draw_panels(self, reorder=True):
+        """Keeps one set of canvas images per panel and just moves them while sliding.
+
+        Panels are only rebuilt when their size, colours, opacity or fade change.
+        """
         c = self.bg_canvas
-        c.delete("panel_bg")
-        if len(self.panel_cache) > 200:
-            self.panel_cache.clear()
+        if len(self.panel_cache) > 400:
+            self.panel_cache.clear()   # panels in use keep their own image references
 
         sx, sy = self.sx, self.sy
         alpha = self.box_opacity_var.get()
         radius = self.box_radius_var.get()
+        fill = self._rgb(self.box_colour_var, DEFAULT_BOX_COLOUR)
+        border = self._rgb(self.border_colour_var, DEFAULT_BORDER_COLOUR)
         w = PANEL_X2 - PANEL_X1
+        live = set()
+        created = False
         for s in self.stack:
             if not s.panel or s.h < 4 or abs(s.x) >= WIN_W:
                 continue
             fade = self._fade_q.get(s.page, 1.0)
             if fade <= 0.0:
                 continue
+            live.add(s.key)
             left = int(round((PANEL_X1 + s.x) * sx))
             top = int(round(s.top * sy))
+            tag = "pnl_" + s.key
+            sig = (s.h, w, round(sx, 4), round(sy, 4), radius, alpha, fade, fill, border)
+            rec = self._panel_items.get(s.key)
+            if rec is not None and rec["sig"] == sig:
+                dx, dy = left - rec["x"], top - rec["y"]
+                if dx or dy:
+                    c.move(tag, dx, dy)
+                    rec["x"], rec["y"] = left, top
+                continue
+            c.delete(tag)
+            imgs = []
             for off, img in self._panel_parts(w, s.h, radius, alpha, fade):
-                c.create_image(left, top + off, image=img, anchor="nw", tags="panel_bg")
+                c.create_image(left, top + off, image=img, anchor="nw", tags=("panel_bg", tag))
+                imgs.append(img)
+            self._panel_items[s.key] = {"sig": sig, "imgs": imgs, "x": left, "y": top}
+            created = True
 
-        if reorder:
+        for key in [k for k in self._panel_items if k not in live]:
+            c.delete("pnl_" + key)
+            del self._panel_items[key]
+
+        if reorder and created:
             c.tag_lower("panel_bg")
             c.tag_lower("net")
             c.tag_lower("bg_img")
@@ -1971,6 +2099,7 @@ class ScreenshotterApp:
         self.root.after(DRAG_INTERVAL_MS, self._drag_tick)
 
     def _end_drag(self):
+        was_dragging = self._dragging
         was_native = self._native_drag
         self._dragging = False
         self._native_drag = False
@@ -1979,6 +2108,8 @@ class ScreenshotterApp:
                 ctypes.windll.winmm.timeEndPeriod(1)
             except Exception:
                 pass
+        if was_dragging:
+            self.schedule_save()   # remember where the window was dropped
 
     def bar_drag(self, event):
         if self._dragging and not self._native_drag:
@@ -1991,11 +2122,13 @@ class ScreenshotterApp:
             self._end_drag()
 
     def bar_hover(self, event):
+        if self.bg_canvas.busy:
+            return
         lx, ly = event.x / self.sx, event.y / self.sy
         over_close = ly < BAR_H and lx >= WIN_W - 36
         over_min = ly < BAR_H and WIN_W - 72 <= lx < WIN_W - 36
         over_button = any(isinstance(b, CanvasButton) and b.enabled and b.hit(event.x, event.y)
-                          for b in self.theme_widgets) or \
+                          for b in self.theme_widgets + self.backup_widgets) or \
             self.scale_reset_btn.hit(event.x, event.y)
         over_header = (self._header_at(lx, ly) is not None or
                        self._tab_at(lx, ly) is not None or over_button)
@@ -2009,27 +2142,45 @@ class ScreenshotterApp:
             cursor = "hand2" if over_header else ""
         self.bg_canvas.config(cursor=cursor)
 
-    # ---------- Config ----------
+    # ---------- Config / saved state ----------
     def load_config(self):
-        if os.path.exists(CONFIG_FILE):
-            try:
-                with open(CONFIG_FILE, "r") as f:
-                    return json.load(f)
-            except Exception:
-                pass
+        for path in (CONFIG_FILE, LEGACY_CONFIG_FILE):
+            if os.path.exists(path):
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    if isinstance(data, dict):
+                        return data
+                except Exception:
+                    pass
         return {}
 
+    @staticmethod
+    def _write_json(path, data):
+        """Write via a temp file so a crash can never leave a half-written config behind."""
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+        os.replace(tmp, path)
+
+    @staticmethod
+    def _field_value(entry, var):
+        """Text for a saved field; empty if it still shows its grey placeholder."""
+        return "" if getattr(entry, "is_default", False) else var.get()
+
     def collect_settings(self):
+        """Everything portable: this is what gets saved and what Export writes."""
         return {
             "dir": self.dir_var.get(),
-            "max_shots": self.max_shots_var.get(),
-            "max_mb": self.max_mb_var.get(),
-            "delay": self.delay_var.get(),
-            "name": self.name_var.get(),
-            "toggle_key": self.toggle_key_var.get(),
-            "single_key": self.single_key_var.get(),
-            "quit_key": self.quit_key_var.get(),
+            "max_shots": self._field_value(self.shots_entry, self.max_shots_var),
+            "max_mb": self._field_value(self.mb_entry, self.max_mb_var),
+            "delay": self._field_value(self.delay_entry, self.delay_var),
+            "name": self._field_value(self.name_entry, self.name_var),
+            "toggle_key": self._field_value(self.toggle_entry, self.toggle_key_var),
+            "single_key": self._field_value(self.single_entry, self.single_key_var),
+            "quit_key": self._field_value(self.quit_entry, self.quit_key_var),
             "notifications": self.notify_var.get(),
+            "low_quality": self.low_quality_var.get(),
             "opacity": self.opacity_var.get(),
             "bar_opacity": self.bar_opacity_var.get(),
             "box_opacity": self.box_opacity_var.get(),
@@ -2048,42 +2199,67 @@ class ScreenshotterApp:
             "bg_oy": round(self.bg_view[2], 4),
         }
 
-    def save_config(self):
+    def _ui_state(self):
+        """Layout state that is saved with the app but not exported: page, boxes, window."""
+        state = {
+            "window_sx": round(self.sx, 4),
+            "window_sy": round(self.sy, 4),
+            "page": self.page,
+            "collapsed": [s.key for s in self.stack if s.panel and s.target < 0.5],
+        }
         try:
-            data = self.collect_settings()
-            data["window_sx"] = round(self.sx, 4)
-            data["window_sy"] = round(self.sy, 4)
-            with open(CONFIG_FILE, "w") as f:
-                json.dump(data, f, indent=4)
+            if not self.minimized and self.root.state() != "iconic":
+                state["window_x"] = self.root.winfo_x()
+                state["window_y"] = self.root.winfo_y()
         except Exception:
             pass
+        return state
+
+    def _restore_position(self, cfg):
+        try:
+            x, y = int(cfg["window_x"]), int(cfg["window_y"])
+            sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        except (KeyError, TypeError, ValueError, tk.TclError):
+            return
+        # Ignore positions that would leave the window off-screen (e.g. a monitor was unplugged)
+        if -WIN_W // 2 <= x <= sw - 100 and 0 <= y <= sh - 100:
+            self.root.geometry(f"+{x}+{y}")
+
+    def save_appearance(self):
+        """Save all settings and UI state, keeping any other keys already in the file."""
+        job, self._save_job = self._save_job, None
+        if job is not None:
+            try:
+                self.root.after_cancel(job)
+            except Exception:
+                pass
+        config = self.load_config()
+        config.update(self.collect_settings())
+        config.update(self._ui_state())
+        try:
+            self._write_json(CONFIG_FILE, config)
+        except Exception:
+            pass
+
+    def save_config(self):
+        self.save_appearance()
 
     def schedule_save(self):
         if self._save_job is not None:
             self.root.after_cancel(self._save_job)
         self._save_job = self.root.after(400, self.save_appearance)
 
-    def save_appearance(self):
-        self._save_job = None
-        config = self.load_config()
-        config.update({k: v for k, v in self.collect_settings().items() if k in APPEARANCE_KEYS})
-        config["window_sx"] = round(self.sx, 4)
-        config["window_sy"] = round(self.sy, 4)
-        try:
-            with open(CONFIG_FILE, "w") as f:
-                json.dump(config, f, indent=4)
-        except Exception:
-            pass
-
     def reset_defaults(self):
-        if os.path.exists(CONFIG_FILE):
-            try:
-                os.remove(CONFIG_FILE)
-            except Exception:
-                pass
+        for path in (CONFIG_FILE, LEGACY_CONFIG_FILE):
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
 
         self.dir_var.set("")
         self.notify_var.set(True)
+        self.low_quality_var.set(False)
         self.opacity_var.set(0.95)
         self.bar_opacity_var.set(0.85)
         self.box_opacity_var.set(0.4)
@@ -2116,7 +2292,15 @@ class ScreenshotterApp:
             entry.config(fg="#64748b")
             entry.is_default = True
 
+        # Expand every box again
+        for s in self.stack:
+            if s.panel:
+                s.p = s.target = 1.0
+                s.animating = False
+        self._apply_layout(self.stack)
+
         self.update_box_theme()
+        self.schedule_save()
         self.status_label.config(text="Status: Settings reset to defaults.", fg=TEXT_MUTED)
 
     def change_window_opacity(self, val):
@@ -2213,7 +2397,7 @@ class ScreenshotterApp:
         if self._dialog_open or \
            (PAUSE_ANIM_WHILE_DRAGGING and (self._dragging or self._resizing)) or \
            (PAUSE_BG_WHILE_SECTION_ANIM and self._anim_job is not None):
-            self.root.after(BG_FRAME_MS, self.animate_background)
+            self.root.after(16, self.animate_background)
             return
 
         f = min(dt / 0.025, 3.0)
@@ -2221,10 +2405,14 @@ class ScreenshotterApp:
         sx, sy, S = self.sx, self.sy, self.scale
         speed_multiplier = self.anim_speed_var.get()
         line_alpha = self.line_opacity_var.get()
+        low = self.low_quality_var.get()
         max_lines = min(MAX_LINES_LIMIT, int(self.line_count_var.get()))
+        if low:
+            max_lines = min(max_lines, LOW_MAX_LINES)
+        steps = LOW_CURVE_STEPS if low else CURVE_STEPS
         spread = self.spread_var.get()
 
-        repel_radius = spread * 110
+        repel_radius = 0.0 if low else spread * 110
         link_max = 100 + spread * 140
 
         ease = 1.0 - (1.0 - min(0.1 * speed_multiplier, 0.99)) ** f
@@ -2302,8 +2490,8 @@ class ScreenshotterApp:
 
                     # Sample the curve (no smooth=True needed, so no extra wobble)
                     pts = []
-                    for step in range(CURVE_STEPS + 1):
-                        t = step / CURVE_STEPS
+                    for step in range(steps + 1):
+                        t = step / steps
                         mt = 1.0 - t
                         bpx = mt * mt * ax + 2 * mt * t * cpx + t * t * bx
                         bpy = mt * mt * ay + 2 * mt * t * cpy + t * t * by
@@ -2331,11 +2519,13 @@ class ScreenshotterApp:
             c.tag_lower("bg_img")
 
         work_ms = (time.perf_counter() - t0) * 1000.0
-        self.root.after(max(1, int(BG_FRAME_MS - work_ms)), self.animate_background)
+        frame_ms = LOW_FRAME_MS if self.low_quality_var.get() else BG_FRAME_MS
+        self.root.after(max(1, int(frame_ms - work_ms)), self.animate_background)
 
     def build_ui(self):
         self.bg_canvas = tk.Canvas(self.root, bg=BG_MAIN, highlightthickness=0)
         self.bg_canvas.ui_scale = (1.0, 1.0)
+        self.bg_canvas.busy = False
         self.bg_canvas.place(x=0, y=0, relwidth=1, relheight=1)
         c = self.bg_canvas
 
@@ -2346,8 +2536,9 @@ class ScreenshotterApp:
             ("save",     "SAVE LOCATION (REQUIRED)",     72, 72, True,  "main"),
             ("limits",   "LIMITS & TIMING (REQUIRED)",  156, 10, True,  "main"),
             ("keys",     "CUSTOM KEYBINDS (REQUIRED)",  128, 10, True,  "main"),
-            ("prefs",    "PREFERENCES",                 430, 72, True,  "prefs"),
-            ("colours",  "COLOURS",                     160, 10, True,  "prefs"),  # +32px for new accent row
+            ("prefs",    "PREFERENCES",                 456, 72, True,  "prefs"),
+            ("colours",  "COLOURS",                     160, 10, True,  "prefs"),
+            ("backup",   "SETTINGS FILE",               108, 10, True,  "prefs"),
             ("presets",  "PRESET THEMES",               182, 72, True,  "themes"),
             ("custom",   "CUSTOM THEMES",               218, 10, True,  "themes"),
             ("buttons",  "",                             36, 18, False, "both"),
@@ -2445,6 +2636,12 @@ class ScreenshotterApp:
         )
         s.widgets.append(self.notify_check)
 
+        self.low_quality_check = CanvasCheckbox(
+            c, X1 + 14, s.top + 66, "Low quality mode (smoother on slow PCs)", self.low_quality_var,
+            TEXT_LIGHT, ("Segoe UI", 9), tags=tg(s, content=False)
+        )
+        s.widgets.append(self.low_quality_check)
+
         def add_slider(s_ref, cy, label, from_, to, res, var, command=None):
             label_id = c.create_text(X1 + 14, cy, text=label, font=("Segoe UI", 9),
                                      fill=TEXT_LIGHT, anchor="w", tags=tg(s_ref, content=False))
@@ -2454,7 +2651,7 @@ class ScreenshotterApp:
             s_ref.widgets.append(slider)
             return slider
 
-        sy = s.top + 82
+        sy = s.top + 108
         self.win_opacity_slider = add_slider(s, sy, "Window Opacity:", 0.4, 1.0, 0.05,
                                              self.opacity_var, self.change_window_opacity)
         self.bar_opacity_slider = add_slider(s, sy + 46, "Title Bar Opacity:", 0.0, 1.0, 0.05,
@@ -2496,8 +2693,25 @@ class ScreenshotterApp:
         add_colour_row(s.top + 44, "Line Colour:", self.line_colour_var, DEFAULT_LINE_COLOUR)
         add_colour_row(s.top + 72, "Border Colour:", self.border_colour_var, DEFAULT_BORDER_COLOUR)
         add_colour_row(s.top + 100, "Box Colour:", self.box_colour_var, DEFAULT_BOX_COLOUR)
-        # New accent colour row — controls all the blue UI chrome
+        # Accent colour row: controls all the blue UI chrome
         self.accent_swatch = add_colour_row(s.top + 128, "Accent Colour:", self.accent_colour_var, DEFAULT_ACCENT_COLOUR)
+
+        # --- Settings file (export / import) ---
+        s = S["backup"]
+        make_header(s)
+        self.backup_widgets.append(CanvasButton(
+            c, X1 + 14, s.top + 52 - 14, X1 + 14 + 222, s.top + 52 + 14,
+            "Export Settings...", self.export_settings,
+            fill=ACCENT_PURPLE, fg=TEXT_LIGHT, border=ACCENT_PURPLE,
+            font=("Segoe UI", 9, "bold"), radius=PRESET_BTN_RADIUS, tags=tg(s)))
+        self.backup_widgets.append(CanvasButton(
+            c, X1 + 252, s.top + 52 - 14, X1 + 252 + 222, s.top + 52 + 14,
+            "Import Settings...", self.import_settings,
+            fill=ACCENT_PURPLE, fg=TEXT_LIGHT, border=ACCENT_PURPLE,
+            font=("Segoe UI", 9, "bold"), radius=PRESET_BTN_RADIUS, tags=tg(s)))
+        c.create_text(X1 + 14, s.top + 86,
+                      text="Everything is also saved automatically as you change it.",
+                      font=("Segoe UI", 8), fill=TEXT_MUTED, anchor="w", tags=tg(s))
 
         # --- Preset Themes ---
         s = S["presets"]
@@ -2569,7 +2783,8 @@ class ScreenshotterApp:
             self.quit_entry, self.notify_check, self.win_opacity_slider, self.bar_opacity_slider,
             self.box_opacity_slider, self.line_opacity_slider, self.box_radius_slider,
             self.speed_slider, self.line_count_slider, self.spread_slider,
-            *self.colour_widgets, *self.theme_widgets, self.image_opacity_slider, self.reset_btn
+            *self.colour_widgets, *self.theme_widgets, *self.backup_widgets,
+            self.image_opacity_slider, self.reset_btn
         ]
 
         self._index_sections()
@@ -2587,13 +2802,15 @@ class ScreenshotterApp:
     def _load_bg_source(self):
         self.bg_src = None
         self._bg_cache = None
-        if os.path.exists(BG_IMAGE_FILE):
-            try:
-                img = Image.open(BG_IMAGE_FILE)
-                img.load()
-                self.bg_src = self._limit_bg_size(img.convert("RGB"))
-            except Exception:
-                self.bg_src = None
+        for path in (BG_IMAGE_FILE, LEGACY_BG_IMAGE_FILE):
+            if os.path.exists(path):
+                try:
+                    img = Image.open(path)
+                    img.load()
+                    self.bg_src = self._limit_bg_size(img.convert("RGB"))
+                    return
+                except Exception:
+                    self.bg_src = None
 
     @staticmethod
     def _limit_bg_size(img):
@@ -2622,7 +2839,7 @@ class ScreenshotterApp:
                                             size[0], size[1], zoom, ox, oy)
         frame = Image.new("RGB", size, (18, 18, 31))
         paste_scaled(frame, self.bg_src, x0, y0, dw, dh,
-                     Image.NEAREST if fast else Image.BILINEAR)
+                     Image.NEAREST if (fast or self.low_quality_var.get()) else Image.BILINEAR)
         base = Image.new("RGB", size, (18, 18, 31))
         self._bg_photo = ImageTk.PhotoImage(Image.blend(base, frame, a))
         c.create_image(0, 0, image=self._bg_photo, anchor="nw", tags="bg_img")
@@ -2648,12 +2865,14 @@ class ScreenshotterApp:
         self.bg_src = None
         self._bg_cache = None
         self.bg_view = [1.0, 0.0, 0.0]
-        if os.path.exists(BG_IMAGE_FILE):
-            try:
-                os.remove(BG_IMAGE_FILE)
-            except Exception:
-                pass
+        for path in (BG_IMAGE_FILE, LEGACY_BG_IMAGE_FILE):
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
         self.render_background()
+        self.schedule_save()
 
     def _open_adjust_dialog(self, img, view, on_apply):
         aspect = (WIN_W * self.sx) / (BG_IMG_H * self.sy)
@@ -2671,6 +2890,7 @@ class ScreenshotterApp:
             "line_count": self.line_count_var.get(),
             "anim_speed": self.anim_speed_var.get(),
             "spread": self.spread_var.get(),
+            "low_quality": self.low_quality_var.get(),
         }
         self._dialog_open = True
         try:
@@ -2726,15 +2946,16 @@ class ScreenshotterApp:
 
     def export_settings(self):
         path = filedialog.asksaveasfilename(
-            title="Export Settings", defaultextension=".json", initialfile="screenshotter_theme.json",
+            title="Export Settings", defaultextension=".json", initialfile="screenshotter_settings.json",
             filetypes=[("Screenshotter settings", "*.json"), ("All files", "*.*")])
         if not path:
             return
         data = {"screenshotter_settings": 1, "settings": self.collect_settings(), "background_image": None}
-        if os.path.exists(BG_IMAGE_FILE):
+        if self.bg_src is not None:
             try:
-                with open(BG_IMAGE_FILE, "rb") as f:
-                    data["background_image"] = base64.b64encode(f.read()).decode("ascii")
+                buf = io.BytesIO()
+                self.bg_src.save(buf, "JPEG", quality=90)
+                data["background_image"] = base64.b64encode(buf.getvalue()).decode("ascii")
             except Exception:
                 pass
         try:
@@ -2803,6 +3024,8 @@ class ScreenshotterApp:
                     pass
         if "notifications" in cfg:
             self.notify_var.set(bool(cfg["notifications"]))
+        if "low_quality" in cfg:
+            self.low_quality_var.set(bool(cfg["low_quality"]))
         for key, var in (("line_colour", self.line_colour_var), ("border_colour", self.border_colour_var),
                          ("box_colour", self.box_colour_var), ("accent_colour", self.accent_colour_var)):
             ok = parse_hex(cfg.get(key, ""))
@@ -3054,15 +3277,13 @@ class ScreenshotterApp:
         self.root.after(0, self.on_close)
 
     def on_close(self):
-        if self._save_job is not None:
-            self.root.after_cancel(self._save_job)
+        self._end_drag()
         if self._anim_job is not None:
             self.root.after_cancel(self._anim_job)
             self._anim_job = None
         while self._timer_refs > 0:
             self._set_timer_resolution(False)
-        self.save_appearance()
-        self._end_drag()
+        self.save_appearance()   # final save (also cancels any pending delayed save)
         self.stop_thread = True
         self.is_running = False
         try:
