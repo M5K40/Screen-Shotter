@@ -9,8 +9,8 @@ currently being supported with security updates.
 | ------- | ------------------ |
 | 1.2.2   | :white_check_mark: |
 | 1.2.1   | :x:                |
-| 1.1.2   | :white_check_mark: |
-| 1.1.1   | :white_check_mark: |
+| 1.1.1   | :x:                |
+| 1.1.0   | :x:                |
 
 ## Reporting a Vulnerability
 
