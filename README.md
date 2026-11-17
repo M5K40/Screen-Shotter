@@ -19,6 +19,11 @@ Custom Limit for screenshot MegaBytes
 ## Last Updated v1.2.2 17/11/26
 Updated Virus Total links. 
 Updated screenshotterWGUI.exe with the current version.
+Updated screenshotterWGUI.py with the current source code.
+Added total settings autosaving, importing and exporting as a JSON file, can be found under the preferences window.
+Added a low quality mode to run smoother on slower/older PC/laptops.
+Added an accent colour for users to customise, changes the usual blue text like "SAVE LOCATION (REQUIRED)" and "LIMITS & TIMING (REQUIRED)". 
+Made the background lines render more smoothly.
 
 ### Update v1.2.1 17/11/26
 Added a adjust image button that allows you to change the size and move around the image that you have uploaded.
