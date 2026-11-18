@@ -34,7 +34,7 @@ Made the background lines render more smoothly.
 </p>
 
 
-## Virus Total Report No GUI Only Console 
+## Virus Total Report No GUI Only Console v1.2.2
 [![VirusTotal Scan Status](https://img.shields.io/badge/VirusTotal-Scan%20Results-blue)](https://www.virustotal.com/gui/file/3baa99c17d50120996aad94ec689fd9261549663e80052aa9e19689fc9b49358)
   
   It has 2 false positives, you can check the source code by looking at "screenshotter.exe" or scanning it through windows security, defender or any anti-virus software.
@@ -42,8 +42,16 @@ Made the background lines render more smoothly.
 <img width="1309" height="916" alt="image" src="https://github.com/user-attachments/assets/6d11d91f-da45-4c17-a80d-6956b7fc4e76" />
 <img width="1392" height="730" alt="image" src="https://github.com/user-attachments/assets/81c8e51d-383f-4d7a-8c39-71e00e469b4b" />
 
+## Virus Total Report GUI Only No Console v1.3.0
+[![VirusTotal Scan Status](https://img.shields.io/badge/VirusTotal-Scan%20Results-blue)](https://www.virustotal.com/gui/file/f780c4f0ad9d29f10046a5c9e2a5e5189eb1f8de2ef1a455adf2c28553ee3b23)
+
+  It has 6 false positives, you can check the source code by looking at "screenshotterWGUI2.exe" or scanning it through windows security, defender or any anti-virus software.
+
+<img width="1768" height="792" alt="image" src="https://github.com/user-attachments/assets/f60b759b-c163-4184-b117-90554eb3eeeb" />
+<img width="1769" height="751" alt="image" src="https://github.com/user-attachments/assets/d6e4b24b-8efa-4b90-90f1-2795730f87d7" />
+
 ## Virus Total Report GUI Only No Console 
-[![VirusTotal Scan Status](https://img.shields.io/badge/VirusTotal-Scan%20Results-blue)](https://www.virustotal.com/gui/file/53b502514f503718ed1eb2b31c11cd87b509c7c709f8880ef50b1d4e36b2ac1c?nocache=1)
+[![VirusTotal Scan Status](https://img.shields.io/badge/VirusTotal-Scan%20Results-blue)](https://www.virustotal.com/gui/file/53b502514f503718ed1eb2b31c11cd87b509c7c709f8880ef50b1d4e36b2ac1c)
 
   It has 4 false positives, you can check the source code by looking at "screenshotterWGUI.exe" or scanning it through windows security, defender or any anti-virus software.
 
