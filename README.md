@@ -47,7 +47,7 @@ Made the background lines render more smoothly.
 
   It has 6 false positives, you can check the source code by looking at "screenshotterWGUI2.exe" or scanning it through windows security, defender or any anti-virus software.
 
-<img width="1768" height="792" alt="image" src="https://github.com/user-attachments/assets/f60b759b-c163-4184-b117-90554eb3eeeb" />
+<img width="1769" height="131" alt="image" src="https://github.com/user-attachments/assets/ade1eeb5-643d-46aa-822f-dab95500fd83" />
 <img width="1769" height="751" alt="image" src="https://github.com/user-attachments/assets/d6e4b24b-8efa-4b90-90f1-2795730f87d7" />
 
 ## Virus Total Report GUI Only No Console 
